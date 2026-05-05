@@ -11,7 +11,8 @@ from flask import Flask, jsonify, render_template, request, Response
 
 app = Flask(__name__)
 
-# Territory_owner is a player number, territory_strength is army count.
+# Territory ownership is intentionally represented as the user requested:
+# territory_owner is a player number, territory_strength is army count.
 PLAYER_COLOURS = {
     0: {"name": "Unclaimed", "path": "#d9c8a8", "army": "none", "ink": "#2a2117"},
     1: {"name": "Crimson", "path": "#8f1d24", "army": "#b21f2d", "ink": "#fff2df"},
@@ -102,10 +103,28 @@ CARD_TYPES = ["infantry", "cavalry", "artillery"]
 CARD_ICONS = {"infantry": "♟", "cavalry": "♞", "artillery": "✹"}
 TRADE_VALUES = [4, 6, 8, 10, 12, 15]
 
+MISSION_DECK = [
+    {"id": "occupy_24", "kind": "occupy", "count": 24, "min_strength": 1, "text": "Occupy 24 Territories of your choice."},
+    {"id": "na_africa", "kind": "continents", "continents": ["North America", "Africa"], "text": "Conquer the Continents of North America and Africa."},
+    {"id": "na_australia", "kind": "continents", "continents": ["North America", "Australia"], "text": "Conquer the Continents of North America and Australia."},
+    {"id": "asia_africa", "kind": "continents", "continents": ["Asia", "Africa"], "text": "Conquer the Continents of Asia and Africa."},
+    {"id": "asia_south_america", "kind": "continents", "continents": ["Asia", "South America"], "text": "Conquer the Continents of Asia and South America."},
+    {"id": "occupy_18_two", "kind": "occupy", "count": 18, "min_strength": 2, "text": "Conquer 18 Territories of your choice and Occupy each with at least 2 Armies."},
+    {"id": "destroy_red", "kind": "destroy", "target": 1, "target_name": "Red", "text": "Destroy all Red Armies. If yours are the Red Armies, then: Occupy 24 Territories of your choice."},
+    {"id": "destroy_blue", "kind": "destroy", "target": 2, "target_name": "Blue", "text": "Destroy all Blue Armies. If yours are the Blue Armies, then: Occupy 24 Territories of your choice."},
+    {"id": "destroy_green", "kind": "destroy", "target": 3, "target_name": "Green", "text": "Destroy all Green Armies. If yours are the Green Armies, then: Occupy 24 Territories of your choice."},
+    {"id": "destroy_yellow", "kind": "destroy", "target": 4, "target_name": "Yellow", "text": "Destroy all Yellow Armies. If yours are the Yellow Armies, then: Occupy 24 Territories of your choice."},
+    {"id": "destroy_black", "kind": "destroy", "target": 5, "target_name": "Black", "text": "Destroy all Black Armies. If yours are the Black Armies, then: Occupy 24 Territories of your choice."},
+    {"id": "destroy_pink", "kind": "destroy", "target": 6, "target_name": "Pink", "text": "Destroy all Pink Armies. If yours are the Pink Armies, then: Occupy 24 Territories of your choice."},
+]
+MISSION_BY_ID = {mission["id"]: mission for mission in MISSION_DECK}
+
 def new_empty_game() -> dict:
     return {
         "started": False,
         "phase": "pregame",
+        "mode": "global",
+        "winner_id": 0,
         "turn": 0,
         "current_player": 0,
         "players": {},
@@ -214,11 +233,70 @@ def check_eliminations(conqueror_pid: int | None = None) -> None:
             log(f"{defeated['name']} has been eliminated.")
 
 
+def completed_mission(pid: int) -> bool:
+    if GAME.get("mode") != "missions":
+        return False
+    mission_id = GAME["players"].get(str(pid), {}).get("mission_id")
+    mission = MISSION_BY_ID.get(mission_id or "")
+    if not mission:
+        return False
+
+    owned = player_territories(pid)
+    kind = mission["kind"]
+
+    if kind == "occupy":
+        min_strength = mission.get("min_strength", 1)
+        return sum(1 for safe in owned if strength(safe) >= min_strength) >= mission["count"]
+
+    if kind == "continents":
+        return all(all(owner(safe) == pid for safe in CONTINENTS[continent]) for continent in mission["continents"])
+
+    if kind == "destroy":
+        target = mission["target"]
+        # Keep games with fewer than six players playable: if the target colour is
+        # the mission holder or is not in this game, use the card's fallback goal.
+        if target == pid or str(target) not in GAME["players"]:
+            return len(owned) >= 24
+        return GAME["players"].get(str(target), {}).get("eliminated", False) or len(player_territories(target)) == 0
+
+    return False
+
+
+def visible_mission(pid: int) -> dict | None:
+    if GAME.get("mode") != "missions" or not pid:
+        return None
+    player = GAME["players"].get(str(pid), {})
+    mission = MISSION_BY_ID.get(player.get("mission_id", ""))
+    if not mission:
+        return None
+    text = mission["text"]
+    target = mission.get("target")
+    if mission["kind"] == "destroy" and target and (target == pid or str(target) not in GAME["players"]):
+        text += " Effective objective: Occupy 24 Territories of your choice."
+    return {"id": mission["id"], "text": text, "complete": completed_mission(pid)}
+
+
+def check_victory(pid: int | None = None) -> None:
+    if not GAME["started"] or GAME.get("winner_id"):
+        return
+
+    if GAME.get("mode") == "missions" and GAME.get("phase") not in {"pregame", "initial_deploy"}:
+        candidates = [pid] if pid else active_player_ids()
+        for candidate in candidates:
+            if candidate and completed_mission(candidate):
+                GAME["winner_id"] = candidate
+                log(f"{GAME['players'][str(candidate)]['name']} completes a secret mission and wins the campaign.")
+                return
+
+    living = [int(pid_s) for pid_s, p in GAME["players"].items() if not p.get("eliminated")]
+    if GAME.get("mode") == "global" and len(living) == 1:
+        GAME["winner_id"] = living[0]
+
+
 def winner() -> dict | None:
-    living = [p for p in GAME["players"].values() if not p.get("eliminated")]
-    if GAME["started"] and len(living) == 1:
-        return living[0]
-    return None
+    check_victory()
+    winner_id = int(GAME.get("winner_id") or 0)
+    return GAME["players"].get(str(winner_id)) if winner_id else None
 
 
 def make_card() -> dict:
@@ -306,6 +384,8 @@ def advance_initial_deploy_turn() -> None:
 
     next_name = GAME["players"][str(GAME["current_player"])] ["name"]
     log(f"Initial deployment passes to {next_name}.")
+
+
 
 def must_trade_cards(pid: int) -> bool:
     p = GAME["players"][str(pid)]
@@ -395,6 +475,7 @@ def public_state() -> dict:
 
     return {
         "started": GAME["started"],
+        "mode": GAME.get("mode", "global"),
         "phase": GAME["phase"],
         "turn": GAME["turn"],
         "current_player": current_player_id(),
@@ -413,6 +494,7 @@ def public_state() -> dict:
         "pending_attack": GAME.get("pending_attack"),
         "last_battle": GAME.get("last_battle"),
         "selected": GAME.get("selected"),
+        "current_mission": visible_mission(current_player_id()),
         "trade_count": GAME["trade_count"],
         "next_trade_value": trade_value(),
         "must_trade": bool(current_player_id() and must_trade_cards(current_player_id()) and GAME["phase"] == "reinforce"),
@@ -545,9 +627,13 @@ def api_new():
     names = [str(name).strip() for name in data.get("players", []) if str(name).strip()]
     if not 2 <= len(names) <= 6:
         return jsonify({"ok": False, "error": "Use between 2 and 6 players."}), 400
+    mode = str(data.get("mode", "global")).strip().lower()
+    if mode not in {"global", "missions"}:
+        return jsonify({"ok": False, "error": "Choose Global Domination or Secret Missions."}), 400
 
     GAME = new_empty_game()
     GAME["started"] = True
+    GAME["mode"] = mode
     GAME["phase"] = "initial_deploy"
     GAME["turn"] = 0
 
@@ -557,9 +643,16 @@ def api_new():
             "name": name,
             "reserve": INITIAL_ARMIES[len(names)],
             "cards": [],
+            "mission_id": None,
             "conquered_this_turn": False,
             "eliminated": False,
         }
+
+    if mode == "missions":
+        mission_deck = MISSION_DECK[:]
+        shuffle(mission_deck)
+        for i in range(1, len(names) + 1):
+            GAME["players"][str(i)]["mission_id"] = mission_deck.pop()["id"]
 
     deck = TERRITORY_ORDER[:]
     shuffle(deck)
@@ -570,7 +663,8 @@ def api_new():
         GAME["players"][str(pid)]["reserve"] -= 1
 
     GAME["current_player"] = 1
-    log(f"Territory cards dealt to {len(names)} commanders. Initial deployment begins.")
+    mode_name = "Secret Missions" if mode == "missions" else "Global Domination"
+    log(f"{mode_name}: territory cards dealt to {len(names)} commanders. Initial deployment begins.")
     return jsonify({"ok": True, "state": public_state()})
 
 
@@ -598,6 +692,7 @@ def api_click():
         log(f"{p['name']} deploys 1 army to {territory_name(safe)}.")
         if phase == "initial_deploy":
             advance_initial_deploy_turn()
+        check_victory(pid)
         return jsonify({"ok": True, "state": public_state()})
 
     if phase == "attack":
@@ -638,7 +733,9 @@ def api_click():
             set_strength(safe, strength(safe) + amount)
             log(f"{p['name']} moves {amount} armies from {territory_name(selected)} to {territory_name(safe)}.")
             GAME["selected"] = None
-            finish_turn_after_move()
+            check_victory(pid)
+            if not GAME.get("winner_id"):
+                finish_turn_after_move()
             return jsonify({"ok": True, "state": public_state()})
         if safe in valid_movers(pid):
             GAME["selected"] = safe
@@ -708,6 +805,7 @@ def api_attack_roll():
         log(f"{p['name']} conquers {territory_name(dst)} and advances {advance} armies.")
         if old_owner:
             check_eliminations(conqueror_pid=pid)
+        check_victory(pid)
     else:
         if strength(src) <= 1:
             GAME["pending_attack"] = None
@@ -766,6 +864,7 @@ def api_trade_cards():
         log(f"{p['name']} trades cards for {value} armies and gains +2 on {territory_name(bonus_safe)}.")
     else:
         log(f"{p['name']} trades cards for {value} reserve armies.")
+    check_victory(pid)
     return jsonify({"ok": True, "state": public_state()})
 
 
@@ -808,7 +907,9 @@ def api_next_phase():
         return jsonify({"ok": True, "state": public_state()})
 
     if phase == "move":
-        finish_turn_after_move()
+        check_victory(pid)
+        if not GAME.get("winner_id"):
+            finish_turn_after_move()
         return jsonify({"ok": True, "state": public_state()})
 
     return jsonify({"ok": False, "error": "No phase transition is available."}), 400
