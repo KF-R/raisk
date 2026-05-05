@@ -332,6 +332,28 @@
       height:16px;
       padding:0;
     }
+    .mission-slip {
+      width: min(620px, 100%);
+      margin: 14px 0 0 auto;
+      padding: .62rem .8rem;
+      border: 1px solid rgba(255, 224, 140, .18);
+      border-radius: 16px;
+      background: rgba(19, 13, 9, .72);
+      color: #d8bd8e;
+      box-shadow: 0 10px 26px rgba(0,0,0,.28);
+      font-size: .82rem;
+      line-height: 1.35;
+    }
+    .mission-slip.hidden { display:none; }
+    .mission-slip strong {
+      display:inline-block;
+      margin-right:.45rem;
+      color:#ead09a;
+      text-transform:uppercase;
+      letter-spacing:.12em;
+      font-size:.68rem;
+    }
+    .mission-slip.complete { border-color: rgba(255, 225, 120, .55); color:#ffe5a3; }
   </style>
 </head>
 <body>
@@ -393,16 +415,25 @@
         </section>
       </aside>
     </section>
+
+    <section class="mission-slip hidden" id="missionPanel" aria-live="polite">
+      <strong>Secret mission</strong><span id="missionText"></span>
+    </section>
   </main>
 
   <div class="modal" id="menuModal">
     <div class="menu-card">
       <h2>New Campaign</h2>
-      <p>Choose 2–6 hot-seat players. Territory cards are shuffled and dealt automatically; each player then deploys their remaining initial armies.</p>
+      <p>Choose 2–6 hot-seat players and a victory mode. Territory cards are shuffled and dealt automatically; setup deployment then rotates one army at a time.</p>
       <div class="form-row">
         <label for="playerCount">Players</label>
         <select id="playerCount">
           <option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option>
+        </select>
+        <label for="gameMode">Mode</label>
+        <select id="gameMode">
+          <option value="global" selected>Global Domination</option>
+          <option value="missions">Secret Missions</option>
         </select>
       </div>
       <div id="playerInputs"></div>
@@ -573,6 +604,7 @@
       renderPlayerTable();
       renderCards();
       renderCombat();
+      renderMission();
       renderLog();
 
       if (state.winner) toast(`${state.winner.name} wins the campaign.`);
@@ -645,6 +677,17 @@
           renderCards();
         });
       });
+    }
+
+    function renderMission() {
+      const panel = $('#missionPanel');
+      const text = $('#missionText');
+      const mission = state?.current_mission;
+      const show = state?.started && state?.mode === 'missions' && Boolean(mission) && !state?.winner;
+      panel.classList.toggle('hidden', !show);
+      panel.classList.toggle('complete', Boolean(mission?.complete));
+      if (show) text.textContent = mission.text;
+      else text.textContent = '';
     }
 
     function renderCombat() {
@@ -792,7 +835,8 @@
     async function startGame() {
       try {
         const players = [...document.querySelectorAll('.player-input')].map(x => x.value.trim()).filter(Boolean);
-        const data = await api('/api/new', {method:'POST', body:{players}});
+        const mode = $('#gameMode').value;
+        const data = await api('/api/new', {method:'POST', body:{players, mode}});
         selectedCards.clear();
         state = data.state;
         renderState();
