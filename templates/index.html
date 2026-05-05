@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Risk Campaign Table</title>
+  <style>
+    :root {
+      --bg: #140f0b;
+      --panel: rgba(39, 28, 19, .88);
+      --panel-2: rgba(64, 45, 29, .82);
+      --paper: #ecd2a2;
+      --paper-dark: #c39b60;
+      --ink: #271a10;
+      --gold: #d8b25c;
+      --gold-bright: #ffe0820;
+      --red: #9d2a2a;
+      --green: #386044;
+      --blue: #254f72;
+      --muted: #a78f70;
+      --line: rgba(255, 222, 161, .22);
+      --shadow: 0 18px 60px rgba(0,0,0,.42);
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 20% 15%, rgba(190, 141, 70, .18), transparent 28rem),
+        radial-gradient(circle at 80% 10%, rgba(95, 44, 24, .26), transparent 35rem),
+        linear-gradient(135deg, #0c0907, #22150c 55%, #130e0a);
+      color: #f8e8c8;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: radial-gradient(circle at center, black, transparent 75%);
+    }
+
+    button, input, select { font: inherit; }
+    button {
+      border: 1px solid rgba(255, 224, 140, .35);
+      border-radius: 999px;
+      color: #fff5d9;
+      background: linear-gradient(180deg, rgba(152, 101, 40, .96), rgba(89, 51, 21, .96));
+      padding: .65rem 1rem;
+      cursor: pointer;
+      box-shadow: 0 8px 20px rgba(0,0,0,.22), inset 0 1px rgba(255,255,255,.16);
+      transition: transform .12s ease, filter .12s ease, border-color .12s ease;
+    }
+    button:hover { transform: translateY(-1px); filter: brightness(1.08); border-color: rgba(255, 229, 162, .7); }
+    button:active { transform: translateY(0); }
+    button.ghost { background: rgba(255,255,255,.06); box-shadow: none; }
+    button.danger { background: linear-gradient(180deg, #963131, #571b1b); }
+    button.success { background: linear-gradient(180deg, #527a45, #2c4c2d); }
+    button:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+
+    .app-shell {
+      width: min(1580px, calc(100vw - 28px));
+      margin: 0 auto;
+      padding: 18px 0 26px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 1rem;
+      align-items: center;
+      margin-bottom: 16px;
+      padding: 14px 18px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: linear-gradient(135deg, rgba(49, 34, 22, .82), rgba(23, 16, 12, .82));
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(1.65rem, 3vw, 3rem);
+      letter-spacing: .03em;
+      color: #ffe7aa;
+      text-shadow: 0 2px 0 #4b2b14;
+    }
+    .subtitle { color: #cfb589; margin-top: .25rem; }
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: .75rem;
+      flex-wrap: wrap;
+    }
+    .turn-badge {
+      display: flex;
+      gap: .65rem;
+      align-items: center;
+      padding: .75rem 1rem;
+      border: 1px solid rgba(255, 224, 140, .28);
+      border-radius: 999px;
+      background: rgba(0,0,0,.22);
+      white-space: nowrap;
+    }
+    .phase-pill {
+      text-transform: uppercase;
+      letter-spacing: .13em;
+      font-size: .72rem;
+      color: #24160a;
+      background: #e8c46d;
+      border-radius: 999px;
+      padding: .32rem .62rem;
+      font-weight: 900;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(640px, 1fr) 390px;
+      gap: 16px;
+      align-items: start;
+    }
+    @media (max-width: 1120px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: linear-gradient(145deg, rgba(49,34,22,.88), rgba(20,14,10,.94));
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .board-card { padding: 14px; }
+    .svg-wrap {
+      position: relative;
+      min-height: 520px;
+      border-radius: 22px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 225, 160, .24);
+      background:
+        linear-gradient(120deg, rgba(255,255,255,.08), transparent 30%),
+        radial-gradient(circle at center, #24384b, #14202a 68%);
+    }
+    #svgContainer { width: 100%; height: 100%; min-height: 520px; display: grid; place-items: center; }
+    #svgContainer svg { width: 100%; height: auto; max-height: calc(100vh - 190px); display: block; }
+
+    .map-hint {
+      position: absolute;
+      left: 18px;
+      bottom: 18px;
+      max-width: min(560px, calc(100% - 36px));
+      border: 1px solid rgba(255, 235, 170, .25);
+      border-radius: 16px;
+      background: rgba(15, 11, 8, .72);
+      color: #f7deb2;
+      padding: .7rem .85rem;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 10px 26px rgba(0,0,0,.25);
+    }
+
+    .phase-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .7rem;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 4px 2px;
+    }
+    .phase-copy { color: #d8c09b; line-height: 1.45; max-width: 720px; }
+
+    .side { display: grid; gap: 16px; }
+    .panel { padding: 16px; }
+    .panel h2 {
+      font-family: Georgia, "Times New Roman", serif;
+      color: #ffe1a0;
+      font-size: 1.25rem;
+      margin-bottom: .75rem;
+    }
+
+    table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 16px; }
+    th, td { padding: .62rem .5rem; border-bottom: 1px solid rgba(255,255,255,.08); text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: #cdb186; font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
+    tr.current { background: rgba(255, 214, 120, .12); }
+    .player-name { display:flex; gap:.45rem; align-items:center; font-weight:800; color:#fff1cb; }
+    .swatch { width:.8rem; height:.8rem; border-radius:50%; border:1px solid rgba(255,255,255,.6); display:inline-block; box-shadow: 0 0 0 2px rgba(0,0,0,.25); }
+
+    .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: .65rem; }
+    .risk-card {
+      position: relative;
+      min-height: 122px;
+      border-radius: 15px;
+      padding: .7rem;
+      color: #2a190d;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.55), transparent 26%),
+        linear-gradient(180deg, #f0d8a6, #cda567);
+      border: 1px solid rgba(255,255,255,.35);
+      cursor: pointer;
+      box-shadow: 0 10px 24px rgba(0,0,0,.2);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform .12s ease, box-shadow .12s ease;
+    }
+    .risk-card:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(0,0,0,.3); }
+    .risk-card.selected { outline: 3px solid #ffe07c; transform: translateY(-2px); }
+    .risk-card .icon { font-size: 2rem; line-height: 1; }
+    .risk-card .type { text-transform: uppercase; font-size: .72rem; letter-spacing: .1em; font-weight:900; }
+    .risk-card .territory { font-family: Georgia, "Times New Roman", serif; font-weight:700; }
+    .empty { color: #baa17a; padding: .65rem 0; }
+
+    .combat-panel {
+      display: none;
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 225, 160, .25);
+      background: linear-gradient(135deg, rgba(95, 37, 23, .72), rgba(31, 18, 13, .9));
+    }
+    .combat-panel.show { display: block; }
+    .combat-head { display:flex; justify-content:space-between; gap:1rem; align-items:start; margin-bottom: .75rem; }
+    .dice-row { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; margin: .5rem 0; }
+    .die {
+      width: 36px; height: 36px;
+      display: grid; place-items: center;
+      border-radius: 9px;
+      background: #f8ead1;
+      color: #2a170c;
+      font-weight: 900;
+      box-shadow: inset 0 -3px rgba(0,0,0,.12), 0 8px 16px rgba(0,0,0,.26);
+      animation: toss .36s ease both;
+    }
+    @keyframes toss { 0% { transform: translateY(-12px) rotate(-18deg); opacity:.2; } 100% { transform:none; opacity:1; } }
+
+    .log-list { display:grid; gap:.45rem; max-height: 260px; overflow:auto; padding-right:.25rem; }
+    .log-item { color:#d9c29c; border-left:2px solid rgba(255, 212, 126, .35); padding-left:.6rem; font-size:.92rem; line-height:1.35; }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 20;
+      max-width: 420px;
+      padding: .9rem 1rem;
+      border: 1px solid rgba(255, 205, 130, .35);
+      border-radius: 18px;
+      background: rgba(45, 20, 14, .94);
+      color: #ffe6bd;
+      box-shadow: var(--shadow);
+      transform: translateY(16px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .toast.show { opacity: 1; transform: none; }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: radial-gradient(circle at center, rgba(67, 42, 22, .65), rgba(0,0,0,.82));
+      backdrop-filter: blur(8px);
+    }
+    .modal.hidden { display:none; }
+    .menu-card {
+      width: min(760px, 100%);
+      border: 1px solid rgba(255, 224, 140, .28);
+      border-radius: 30px;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.08), transparent 30%),
+        linear-gradient(135deg, rgba(56,37,24,.98), rgba(20,14,10,.98));
+      box-shadow: 0 30px 90px rgba(0,0,0,.55);
+      padding: 28px;
+    }
+    .menu-card h2 {
+      font-family: Georgia, "Times New Roman", serif;
+      color: #ffe2a3;
+      font-size: clamp(2rem, 6vw, 4rem);
+      margin-bottom: .4rem;
+    }
+    .menu-card p { color:#d1b98f; margin-bottom: 1.2rem; line-height:1.5; }
+    .form-row { display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; margin: .85rem 0; }
+    label { color:#d9c099; font-weight:700; }
+    input, select {
+      border: 1px solid rgba(255, 224, 140, .3);
+      border-radius: 13px;
+      background: rgba(0,0,0,.2);
+      color:#fff0cd;
+      padding:.7rem .8rem;
+      outline: none;
+    }
+    input:focus, select:focus { border-color:#f3ca70; box-shadow:0 0 0 3px rgba(243,202,112,.15); }
+    #playerInputs { display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap:.7rem; margin:1rem 0 1.35rem; }
+    .player-input { width:100%; }
+
+    .territory {
+      cursor: pointer;
+    }
+    .map-options {
+      display:flex;
+      align-items:center;
+      gap:.45rem;
+      padding:.55rem .72rem;
+      border:1px solid rgba(255, 224, 140, .28);
+      border-radius:999px;
+      background:rgba(29, 21, 14, .78);
+      color:#f3d99b;
+      box-shadow:0 8px 24px rgba(0,0,0,.24);
+      backdrop-filter: blur(6px);
+      font-size:.82rem;
+      user-select:none;
+      white-space:nowrap;
+    }
+    .map-options input {
+      accent-color:#d7a84e;
+      width:16px;
+      height:16px;
+      padding:0;
+    }
+  </style>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>Risk Campaign Table</h1>
+        <p class="subtitle">Hot-seat conquest with a live SVG board, card trades, dice combat, and Napoleonic table styling.</p>
+      </div>
+      <div class="topbar-actions">
+        <label class="map-options" title="Toggle whether territory paths inherit the owner colour, or only army markers do.">
+          <input type="checkbox" id="ownerFillToggle" checked>
+          colour territories
+        </label>
+        <div class="turn-badge" id="turnBadge">
+          <span class="phase-pill">Pregame</span>
+          <span>Start a campaign</span>
+        </div>
+      </div>
+    </header>
+
+    <section class="layout">
+      <div class="card board-card">
+        <div class="svg-wrap">
+          <div id="svgContainer"></div>
+          <div class="map-hint" id="mapHint">Start a game to deal territories and begin deployment.</div>
+        </div>
+
+        <div class="combat-panel" id="combatPanel"></div>
+
+        <div class="phase-controls">
+          <p class="phase-copy" id="phaseCopy">Use the campaign menu to create up to six human hot-seat players.</p>
+          <div class="form-row" style="margin:0">
+            <button id="stopAttackBtn" class="ghost danger" style="display:none">Stop attack</button>
+            <button id="nextPhaseBtn" class="success">Next phase</button>
+            <button id="newGameBtn" class="ghost">New game</button>
+          </div>
+        </div>
+      </div>
+
+      <aside class="side">
+        <section class="card panel">
+          <h2>Commanders</h2>
+          <div id="playerTable"></div>
+        </section>
+
+        <section class="card panel">
+          <h2>Current player cards</h2>
+          <div id="cardsPanel"></div>
+          <div class="form-row">
+            <button id="tradeBtn">Trade selected</button>
+            <button id="debugCardBtn" class="ghost">+ test card</button>
+          </div>
+        </section>
+
+        <section class="card panel">
+          <h2>Battle record</h2>
+          <div class="log-list" id="logList"></div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <div class="modal" id="menuModal">
+    <div class="menu-card">
+      <h2>New Campaign</h2>
+      <p>Choose 2–6 hot-seat players. Territory cards are shuffled and dealt automatically; each player then deploys their remaining initial armies.</p>
+      <div class="form-row">
+        <label for="playerCount">Players</label>
+        <select id="playerCount">
+          <option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option>
+        </select>
+      </div>
+      <div id="playerInputs"></div>
+      <button id="startBtn">Deal territories</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    let state = null;
+    let ownerFills = localStorage.getItem('risk_owner_fills') !== '0';
+    const selectedCards = new Set();
+    const $ = sel => document.querySelector(sel);
+
+    function toast(msg) {
+      const el = $('#toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(toast.timer);
+      toast.timer = setTimeout(() => el.classList.remove('show'), 3200);
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        method: opts.method || 'GET',
+        headers: opts.body ? {'Content-Type': 'application/json'} : {},
+        body: opts.body ? JSON.stringify(opts.body) : undefined
+      });
+      let data;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) data = await res.json();
+      else data = await res.text();
+      if (!res.ok || (data && data.ok === false)) {
+        throw new Error((data && data.error) || res.statusText);
+      }
+      return data;
+    }
+
+    async function refresh() {
+      state = await api('/api/state');
+      renderState();
+      await refreshSvg();
+    }
+
+    async function refreshSvg() {
+      const svgText = await fetch(`/api/svg?owner_fills=${ownerFills ? '1' : '0'}`).then(r => r.text());
+      $('#svgContainer').innerHTML = svgText;
+      decorateSvg();
+    }
+
+    function findTerritoryElement(node) {
+      const svgContainer = $('#svgContainer');
+      while (node && node !== document && node !== svgContainer) {
+        const safe = node.dataset?.safe || (node.id && state?.territories?.[node.id] ? node.id : null);
+        if (safe && state?.territories?.[safe]) return {el: node, safe};
+        node = node.parentNode || null;
+      }
+      return null;
+    }
+
+    let lastTerritoryActivation = {safe: null, at: 0};
+
+    function activateTerritory(safe, ev) {
+      if (!safe || !state?.territories?.[safe]) return;
+      if (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+
+      // Use a single click path for pointer devices; keyboard activation remains separate.
+      // This avoids duplicate prompts caused by pointerup followed by synthetic click.
+      const now = performance.now();
+      if (lastTerritoryActivation.safe === safe && now - lastTerritoryActivation.at < 220) return;
+      lastTerritoryActivation = {safe, at: now};
+
+      territoryClick(safe);
+    }
+
+    function delegatedTerritoryEvent(ev) {
+      const hit = findTerritoryElement(ev.target);
+      if (hit) activateTerritory(hit.safe, ev);
+    }
+
+    function decorateSvg() {
+      const svg = $('#svgContainer svg');
+      if (!svg || !state) return;
+      const validPrimary = new Set(state.valid_clicks.primary || []);
+      const validSecondary = new Set(state.valid_clicks.secondary || []);
+      const selected = state.valid_clicks.selected;
+
+      // The real board renders its paths from <defs> through <use>, so the
+      // server injects #territory_hit_layer with concrete transparent paths.
+      // We decorate both the source paths for visual styling and hit paths for
+      // interaction.
+      let runtimeStyle = svg.querySelector('#risk_client_click_styles');
+      if (!runtimeStyle) {
+        runtimeStyle = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+        runtimeStyle.id = 'risk_client_click_styles';
+        runtimeStyle.textContent = `
+          #territory_names, #territory_names * { pointer-events: none; }
+          #region_labels, #region_labels * { pointer-events: none; }
+          #continents, #continents * { pointer-events: none; }
+          #armies_deployed, #armies_deployed * { pointer-events: none; }
+          #territory_hit_layer { pointer-events: all; }
+          #territory_hit_layer .territory-hit { fill: #fff; fill-opacity: 0; stroke: none; pointer-events: all; cursor: pointer; }
+          #territory_hit_layer .valid-primary { fill-opacity: .015; stroke:#ffe68d; stroke-width:3; stroke-opacity:.95; }
+          #territory_hit_layer .valid-secondary { fill-opacity: .015; stroke:#ff6b57; stroke-width:3; stroke-opacity:.95; }
+          #territory_hit_layer .territory-selected { fill-opacity:.02; stroke:#fff4b4; stroke-width:4; stroke-opacity:1; }
+          #map .valid-primary { filter: brightness(1.2) drop-shadow(0 0 7px rgba(255,230,140,.95)) !important; }
+          #map .valid-secondary { filter: brightness(1.22) drop-shadow(0 0 9px rgba(255,90,70,.95)) !important; }
+          #map .territory-selected { stroke:#fff4b4 !important; stroke-width:3.2 !important; }
+        `;
+        svg.insertBefore(runtimeStyle, svg.firstChild);
+      }
+
+      for (const [safe, t] of Object.entries(state.territories)) {
+        const sourceEl = svg.querySelector(`#map #${safe}`);
+        const hitEl = svg.querySelector(`#territory_hit_layer [data-safe="${safe}"]`) || sourceEl;
+        if (!hitEl && !sourceEl) continue;
+
+        for (const el of [sourceEl, hitEl].filter(Boolean)) {
+          el.classList.add('territory');
+          el.dataset.safe = safe;
+          el.dataset.owner = t.owner;
+          el.dataset.strength = t.strength;
+          if (validPrimary.has(safe)) el.classList.add('valid-primary');
+          if (validSecondary.has(safe)) el.classList.add('valid-secondary');
+          if (selected === safe) el.classList.add('territory-selected');
+          el.setAttribute('aria-label', `${t.name}: ${playerName(t.owner)} — ${t.strength} armies`);
+        }
+
+        hitEl.setAttribute('role', 'button');
+        hitEl.setAttribute('tabindex', '0');
+        hitEl.style.pointerEvents = 'all';
+        hitEl.addEventListener('click', ev => activateTerritory(safe, ev));
+        hitEl.addEventListener('keydown', ev => {
+          if (ev.key === 'Enter' || ev.key === ' ') activateTerritory(safe, ev);
+        });
+      }
+    }
+
+    function playerName(pid) {
+      if (!pid) return 'Unclaimed';
+      const p = state?.players?.find(x => x.id === pid);
+      return p ? p.name : `Player ${pid}`;
+    }
+
+    function phaseLabel(phase) {
+      return ({
+        pregame: 'Pregame',
+        initial_deploy: 'Initial deployment',
+        reinforce: 'Reinforce',
+        attack: 'Attack',
+        move: 'Move'
+      })[phase] || phase;
+    }
+
+    function renderState() {
+      const current = state.current;
+      $('#menuModal').classList.toggle('hidden', state.started);
+      $('#turnBadge').innerHTML = `<span class="phase-pill">${phaseLabel(state.phase)}</span><span>${current ? `Turn ${state.turn || 'setup'} · ${current.name}` : 'Start a campaign'}</span>`;
+      $('#mapHint').textContent = hintText();
+      $('#phaseCopy').textContent = phaseCopy();
+      $('#nextPhaseBtn').disabled = !state.started || Boolean(state.winner) || state.phase === 'initial_deploy';
+      $('#stopAttackBtn').style.display = state.phase === 'attack' ? 'inline-block' : 'none';
+
+      renderPlayerTable();
+      renderCards();
+      renderCombat();
+      renderLog();
+
+      if (state.winner) toast(`${state.winner.name} wins the campaign.`);
+    }
+
+    function hintText() {
+      if (!state.started) return 'Start a game to deal territories and begin deployment.';
+      if (state.winner) return `${state.winner.name} controls the board.`;
+      const c = state.current;
+      if (state.phase === 'initial_deploy') return `${c.name}: place one army on one owned territory. ${c.reserve} setup armies remaining for this player.`;
+      if (state.phase === 'reinforce') return `${c.name}: deploy ${c.reserve} reserve armies. Trade cards first if required.`;
+      if (state.phase === 'attack') {
+        if (state.pending_attack) return 'Choose attacker and defender dice, set the conquest advance amount, then roll.';
+        if (state.selected) return `Attack from ${state.territories[state.selected].name}: choose a highlighted enemy territory.`;
+        return `${c.name}: choose a highlighted territory with enough armies to attack.`;
+      }
+      if (state.phase === 'move') {
+        if (state.selected) return `Move from ${state.territories[state.selected].name}: choose a highlighted friendly neighbour.`;
+        return `${c.name}: optionally make one adjacent friendly move, or use Next phase to decline.`;
+      }
+      return 'Ready.';
+    }
+
+    function phaseCopy() {
+      if (!state.started) return 'Use the campaign menu to create up to six human hot-seat players.';
+      if (state.phase === 'initial_deploy') return 'Initial setup: territories have been dealt. Players now rotate one army at a time until all setup reserves are placed; normal play then begins with Player 1.';
+      if (state.phase === 'reinforce') return `Reinforce: deploy all reserve armies. Next card trade is worth ${state.next_trade_value} armies.`;
+      if (state.phase === 'attack') return 'Attack: select an owned territory, then an adjacent enemy territory. Choose attacker dice, defender dice, and the advance amount used if the volley conquers.';
+      if (state.phase === 'move') return 'Move: make one adjacent friendly transfer. The turn ends immediately after that move, or use Next phase to decline moving.';
+      return '';
+    }
+
+    function renderPlayerTable() {
+      if (!state.started) { $('#playerTable').innerHTML = '<div class="empty">No commanders yet.</div>'; return; }
+      const rows = state.players.map(p => `
+        <tr class="${p.id === state.current_player ? 'current' : ''}">
+          <td><span class="player-name"><span class="swatch" style="background:${p.colour.path}"></span>${p.name}${p.eliminated ? ' †' : ''}</span></td>
+          <td>${p.territory_count}</td>
+          <td>${p.card_count}</td>
+          <td>${p.reserve}</td>
+          <td>${p.army_count}</td>
+          <td>${p.continent_bonus}</td>
+        </tr>`).join('');
+      $('#playerTable').innerHTML = `
+        <table>
+          <thead><tr><th>Player</th><th>Terr.</th><th>Cards</th><th>Reserve</th><th>Armies</th><th>Bonus</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function renderCards() {
+      const c = state.current;
+      if (!state.started || !c) { $('#cardsPanel').innerHTML = '<div class="empty">Cards appear here after conquering territories.</div>'; return; }
+      const must = state.must_trade ? '<p class="empty" style="color:#ffe08b">You must trade a set before leaving Reinforce.</p>' : '';
+      if (!c.cards.length) { $('#cardsPanel').innerHTML = must + '<div class="empty">No cards.</div>'; return; }
+      $('#cardsPanel').innerHTML = must + `<div class="cards-grid">${c.cards.map(card => `
+        <div class="risk-card ${selectedCards.has(card.id) ? 'selected' : ''}" data-card="${card.id}">
+          <div class="type">${card.type}</div>
+          <div class="icon">${card.icon}</div>
+          <div class="territory">${card.territory_name}</div>
+        </div>`).join('')}</div>`;
+      document.querySelectorAll('[data-card]').forEach(el => {
+        el.addEventListener('click', () => {
+          const id = el.dataset.card;
+          if (selectedCards.has(id)) selectedCards.delete(id);
+          else {
+            if (selectedCards.size >= 3) selectedCards.clear();
+            selectedCards.add(id);
+          }
+          renderCards();
+        });
+      });
+    }
+
+    function renderCombat() {
+      const panel = $('#combatPanel');
+      if (!state.pending_attack && !state.last_battle) {
+        panel.classList.remove('show');
+        panel.innerHTML = '';
+        return;
+      }
+      const pa = state.pending_attack;
+      const b = state.last_battle;
+      const pendingHtml = pa ? `
+        <div class="combat-head">
+          <div>
+            <h2 style="margin:0">${state.territories[pa.from].name} → ${state.territories[pa.to].name}</h2>
+            <p class="empty" style="padding:.25rem 0 0">Attacker may roll up to ${pa.max_attack_dice}; defender may choose up to ${pa.max_defence_dice}. Advance defaults to the maximum if conquered.</p>
+          </div>
+          <div class="form-row" style="margin:0">
+            <label for="attackDice">Attack dice</label>
+            <select id="attackDice" onchange="syncAdvanceSelect()">${[...Array(pa.max_attack_dice)].map((_, i) => `<option value="${i+1}" ${i+1===pa.max_attack_dice?'selected':''}>${i+1}</option>`).join('')}</select>
+            <label for="defDice">Defence dice</label>
+            <select id="defDice">${[...Array(pa.max_defence_dice)].map((_, i) => `<option value="${i+1}" ${i+1===pa.max_defence_dice?'selected':''}>${i+1}</option>`).join('')}</select>
+            <label for="advanceArmies">Advance</label>
+            <select id="advanceArmies"></select>
+            <button onclick="rollAttack()">Roll volley</button>
+          </div>
+        </div>` : '';
+      const battleHtml = b ? `
+        <div class="dice-row"><strong>Attacker</strong>${b.attacker_rolls.map(d => `<span class="die">${d}</span>`).join('')} <span>lost ${b.attacker_losses}</span></div>
+        <div class="dice-row"><strong>Defender</strong>${b.defender_rolls.map(d => `<span class="die">${d}</span>`).join('')} <span>lost ${b.defender_losses}</span></div>
+        ${b.conquered ? `<p class="empty" style="color:#ffe08b">Conquered ${b.to_name}; advanced ${b.advance} armies.</p>` : ''}` : '';
+      panel.innerHTML = pendingHtml + battleHtml;
+      panel.classList.add('show');
+      syncAdvanceSelect();
+    }
+
+    function syncAdvanceSelect() {
+      const pa = state?.pending_attack;
+      const attackDiceEl = $('#attackDice');
+      const advanceEl = $('#advanceArmies');
+      if (!pa || !attackDiceEl || !advanceEl) return;
+      const minAdvance = Number(attackDiceEl.value || pa.max_attack_dice);
+      const maxAdvance = Math.max(minAdvance, (state.territories[pa.from]?.strength || 1) - 1);
+      const previous = Number(advanceEl.value || maxAdvance);
+      advanceEl.innerHTML = '';
+      for (let n = minAdvance; n <= maxAdvance; n++) {
+        const opt = document.createElement('option');
+        opt.value = String(n);
+        opt.textContent = String(n);
+        if (n === Math.min(Math.max(previous, minAdvance), maxAdvance)) opt.selected = true;
+        advanceEl.appendChild(opt);
+      }
+      if (!advanceEl.value) advanceEl.value = String(maxAdvance);
+    }
+    window.syncAdvanceSelect = syncAdvanceSelect;
+
+    function renderLog() {
+      $('#logList').innerHTML = (state.log || []).map(item => `<div class="log-item">${item}</div>`).join('') || '<div class="empty">No record yet.</div>';
+    }
+
+    async function territoryClick(safe) {
+      try {
+        const body = {territory: safe};
+        if (state.phase === 'move' && state.selected && state.valid_clicks.secondary.includes(safe)) {
+          const fromStrength = state.territories[state.selected]?.strength || 1;
+          const maxMove = Math.max(1, fromStrength - 1);
+          const raw = prompt(`Move how many armies? (1–${maxMove})`, String(maxMove));
+          if (raw === null) return;
+          const amount = Math.floor(Number(raw));
+          if (!Number.isFinite(amount) || amount < 1) {
+            toast('Move cancelled: enter a positive army count.');
+            return;
+          }
+          body.amount = Math.min(amount, maxMove);
+        }
+        const data = await api('/api/click', {method:'POST', body});
+        state = data.state;
+        renderState();
+        await refreshSvg();
+      } catch (err) { toast(err.message); }
+    }
+
+    async function rollAttack() {
+      try {
+        const attackDice = Number($('#attackDice')?.value || 1);
+        const defenceDice = Number($('#defDice')?.value || 1);
+        const advanceArmies = Number($('#advanceArmies')?.value || attackDice);
+        const data = await api('/api/attack/roll', {
+          method:'POST',
+          body:{attack_dice: attackDice, defence_dice: defenceDice, advance_armies: advanceArmies}
+        });
+        state = data.state;
+        renderState();
+        await refreshSvg();
+      } catch (err) { toast(err.message); }
+    }
+    window.rollAttack = rollAttack;
+
+    async function nextPhase() {
+      try {
+        selectedCards.clear();
+        const data = await api('/api/phase/next', {method:'POST', body:{}});
+        state = data.state;
+        renderState();
+        await refreshSvg();
+      } catch (err) { toast(err.message); }
+    }
+
+    async function stopAttack() {
+      try {
+        const data = await api('/api/attack/stop', {method:'POST', body:{}});
+        state = data.state;
+        renderState();
+        await refreshSvg();
+      } catch (err) { toast(err.message); }
+    }
+
+    async function tradeSelected() {
+      try {
+        if (selectedCards.size !== 3) throw new Error('Select exactly three cards.');
+        const data = await api('/api/cards/trade', {method:'POST', body:{card_ids:[...selectedCards]}});
+        selectedCards.clear();
+        state = data.state;
+        renderState();
+        await refreshSvg();
+      } catch (err) { toast(err.message); }
+    }
+
+    async function debugCard() {
+      try {
+        const data = await api('/api/debug/card', {method:'POST', body:{}});
+        state = data.state;
+        renderState();
+      } catch (err) { toast(err.message); }
+    }
+
+    function renderPlayerInputs() {
+      const n = Number($('#playerCount').value);
+      const defaults = ['Crimson Marshal', 'Blue General', 'Green Duke', 'Golden Emperor', 'Black Baron', 'Rose Admiral'];
+      $('#playerInputs').innerHTML = Array.from({length:n}, (_, i) => `
+        <input class="player-input" value="${defaults[i]}" aria-label="Player ${i+1} name" />
+      `).join('');
+    }
+
+    async function startGame() {
+      try {
+        const players = [...document.querySelectorAll('.player-input')].map(x => x.value.trim()).filter(Boolean);
+        const data = await api('/api/new', {method:'POST', body:{players}});
+        selectedCards.clear();
+        state = data.state;
+        renderState();
+        await refreshSvg();
+      } catch (err) { toast(err.message); }
+    }
+
+
+    $('#svgContainer').addEventListener('click', delegatedTerritoryEvent, true);
+
+    $('#ownerFillToggle').checked = ownerFills;
+    $('#ownerFillToggle').addEventListener('change', async ev => {
+      ownerFills = Boolean(ev.target.checked);
+      localStorage.setItem('risk_owner_fills', ownerFills ? '1' : '0');
+      await refreshSvg();
+    });
+
+    $('#playerCount').addEventListener('change', renderPlayerInputs);
+    $('#startBtn').addEventListener('click', startGame);
+    $('#nextPhaseBtn').addEventListener('click', nextPhase);
+    $('#stopAttackBtn').addEventListener('click', stopAttack);
+    $('#tradeBtn').addEventListener('click', tradeSelected);
+    $('#debugCardBtn').addEventListener('click', debugCard);
+    $('#newGameBtn').addEventListener('click', () => $('#menuModal').classList.remove('hidden'));
+
+    renderPlayerInputs();
+    refresh().catch(err => toast(err.message));
+  </script>
+</body>
+</html>
