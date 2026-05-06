@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
-from random import choice, randint, shuffle
+from itertools import combinations
+from random import randint, random, shuffle
 import re
 import time
 import uuid
 
 from flask import Flask, jsonify, render_template, request, Response
+
+from ai_personalities import AI_PERSONALITIES, CHOKE_VALUES, DEFAULT_PERSONALITY_BY_PLAYER
 
 app = Flask(__name__)
 
@@ -98,10 +101,23 @@ CONTINENTS = {
     "Australia": ["eastern_australia", "new_guinea", "indonesia", "western_australia"],
 }
 CONTINENT_BONUS = {"North America": 5, "South America": 2, "Europe": 5, "Africa": 3, "Asia": 7, "Australia": 2}
+TERRITORY_CONTINENT = {safe: continent for continent, terrs in CONTINENTS.items() for safe in terrs}
 INITIAL_ARMIES = {2: 40, 3: 35, 4: 30, 5: 25, 6: 20}
 CARD_TYPES = ["infantry", "cavalry", "artillery"]
 CARD_ICONS = {"infantry": "♟", "cavalry": "♞", "artillery": "✹"}
 TRADE_VALUES = [4, 6, 8, 10, 12, 15]
+STAT_DEFAULTS = {
+    "reinforcements_received": 0,
+    "trade_armies": 0,
+    "trade_bonus_armies": 0,
+    "cards_drawn": 0,
+    "cards_traded": 0,
+    "attacks": 0,
+    "territories_conquered": 0,
+    "territories_lost": 0,
+    "armies_lost": 0,
+    "moves": 0,
+}
 
 MISSION_DECK = [
     {"id": "occupy_24", "kind": "occupy", "count": 24, "min_strength": 1, "text": "Occupy 24 Territories of your choice."},
@@ -119,6 +135,40 @@ MISSION_DECK = [
 ]
 MISSION_BY_ID = {mission["id"]: mission for mission in MISSION_DECK}
 
+
+def create_card_deck() -> list[dict]:
+    """Build one reinforcement card per territory, with 14 of each type."""
+    territories = TERRITORY_ORDER[:]
+    types = (CARD_TYPES * ((len(territories) + len(CARD_TYPES) - 1) // len(CARD_TYPES)))[:len(territories)]
+    shuffle(territories)
+    shuffle(types)
+    return [
+        {
+            "id": uuid.uuid4().hex[:10],
+            "type": typ,
+            "icon": CARD_ICONS[typ],
+            "territory": safe,
+            "territory_name": TERRITORY_INFO[safe]["name"],
+        }
+        for safe, typ in zip(territories, types)
+    ]
+
+
+def draw_card() -> dict | None:
+    """Draw from the finite territory-card deck, recycling only traded discards."""
+    if not GAME["card_deck"] and GAME["card_discard"]:
+        GAME["card_deck"] = GAME["card_discard"][:]
+        GAME["card_discard"] = []
+        shuffle(GAME["card_deck"])
+        log("The reinforcement-card discard pile is reshuffled into a new draw deck.")
+    if not GAME["card_deck"]:
+        return None
+    return GAME["card_deck"].pop()
+
+
+def discard_cards(cards: list[dict]) -> None:
+    GAME["card_discard"].extend(cards)
+
 def new_empty_game() -> dict:
     return {
         "started": False,
@@ -133,6 +183,9 @@ def new_empty_game() -> dict:
         "pending_attack": None,
         "last_battle": None,
         "trade_count": 0,
+        "card_deck": create_card_deck(),
+        "card_discard": [],
+        "stats": {},
         "log": ["Prepare the campaign table."],
     }
 
@@ -144,6 +197,37 @@ def log(message: str) -> None:
     GAME["log"].insert(0, f"{time.strftime('%H:%M:%S')} — {message}")
     del GAME["log"][60:]
 
+
+def ensure_stats(pid: int) -> dict:
+    stats = GAME.setdefault("stats", {})
+    key = str(pid)
+    if key not in stats:
+        stats[key] = STAT_DEFAULTS.copy()
+    else:
+        for field, default in STAT_DEFAULTS.items():
+            stats[key].setdefault(field, default)
+    return stats[key]
+
+
+def add_stat(pid: int | None, field: str, amount: int = 1) -> None:
+    if not pid or str(pid) not in GAME.get("players", {}):
+        return
+    ensure_stats(int(pid))[field] = ensure_stats(int(pid)).get(field, 0) + int(amount)
+
+
+
+def personality_name(pid: int) -> str:
+    player = GAME["players"].get(str(pid), {})
+    name = player.get("ai_personality") or DEFAULT_PERSONALITY_BY_PLAYER.get(pid, "Balanced General")
+    return name if name in AI_PERSONALITIES else "Balanced General"
+
+
+def personality(pid: int) -> dict:
+    return AI_PERSONALITIES[personality_name(pid)]
+
+
+def is_ai_player(pid: int) -> bool:
+    return GAME["players"].get(str(pid), {}).get("kind") == "ai"
 
 def current_player() -> dict | None:
     pid = GAME["current_player"]
@@ -219,6 +303,7 @@ def check_eliminations(conqueror_pid: int | None = None) -> None:
             continue
 
         defeated["eliminated"] = True
+        defeated["eliminated_by"] = int(conqueror_pid or 0)
         transferred = 0
         if conqueror_pid and conqueror_pid != pid and str(conqueror_pid) in GAME["players"]:
             conqueror = GAME["players"][str(conqueror_pid)]
@@ -231,6 +316,21 @@ def check_eliminations(conqueror_pid: int | None = None) -> None:
             log(f"{defeated['name']} has been eliminated; {transferred} cards transfer to {GAME['players'][str(conqueror_pid)]['name']}.")
         else:
             log(f"{defeated['name']} has been eliminated.")
+
+        convert_third_party_destroy_missions(pid, conqueror_pid)
+
+
+def convert_third_party_destroy_missions(target_pid: int, conqueror_pid: int | None) -> None:
+    if GAME.get("mode") != "missions":
+        return
+    for holder_s, player in GAME["players"].items():
+        holder_pid = int(holder_s)
+        if player.get("eliminated") or holder_pid == conqueror_pid:
+            continue
+        mission = MISSION_BY_ID.get(player.get("mission_id", ""))
+        if mission and mission.get("kind") == "destroy" and int(mission.get("target", 0)) == target_pid:
+            player["mission_id"] = "occupy_24"
+            log(f"{player['name']}'s destroy mission converts to Occupy 24 territories because another commander eliminated {GAME['players'][str(target_pid)]['name']}.")
 
 
 def completed_mission(pid: int) -> bool:
@@ -257,7 +357,10 @@ def completed_mission(pid: int) -> bool:
         # the mission holder or is not in this game, use the card's fallback goal.
         if target == pid or str(target) not in GAME["players"]:
             return len(owned) >= 24
-        return GAME["players"].get(str(target), {}).get("eliminated", False) or len(player_territories(target)) == 0
+        target_player = GAME["players"].get(str(target), {})
+        if target_player.get("eliminated") or len(player_territories(target)) == 0:
+            return int(target_player.get("eliminated_by") or 0) == pid
+        return False
 
     return False
 
@@ -299,16 +402,33 @@ def winner() -> dict | None:
     return GAME["players"].get(str(winner_id)) if winner_id else None
 
 
-def make_card() -> dict:
-    typ = choice(CARD_TYPES)  # Original non-wild deck: 14/14/14, so equal chance by type.
-    safe = choice(TERRITORY_ORDER)
-    return {
-        "id": uuid.uuid4().hex[:10],
-        "type": typ,
-        "icon": CARD_ICONS[typ],
-        "territory": safe,
-        "territory_name": territory_name(safe),
-    }
+def make_card() -> dict | None:
+    return draw_card()
+
+
+def trade_bonus_territories(pid: int, cards: list[dict]) -> list[str]:
+    """Return all traded-card territories currently occupied by the player.
+
+    Classic Risk grants two immediate armies on each matching territory card
+    in the traded set, not just one selected match.
+    """
+    matches: list[str] = []
+    seen: set[str] = set()
+    for card in cards:
+        safe = card["territory"]
+        if safe not in seen and owner(safe) == pid:
+            matches.append(safe)
+            seen.add(safe)
+    return matches
+
+
+def apply_trade_bonus(pid: int, cards: list[dict]) -> list[str]:
+    matches = trade_bonus_territories(pid, cards)
+    for safe in matches:
+        set_strength(safe, strength(safe) + 2)
+    if matches:
+        add_stat(pid, "trade_bonus_armies", 2 * len(matches))
+    return matches
 
 
 def is_valid_trade(cards: list[dict]) -> bool:
@@ -334,6 +454,7 @@ def begin_turn(pid: int) -> None:
     p = GAME["players"][str(pid)]
     gained = reinforcement_count(pid)
     p["reserve"] += gained
+    add_stat(pid, "reinforcements_received", gained)
     p["conquered_this_turn"] = False
     log(f"{p['name']} begins Reinforce and receives {gained} armies.")
 
@@ -342,9 +463,13 @@ def finish_turn_after_move() -> None:
     pid = current_player_id()
     p = GAME["players"][str(pid)]
     if p.get("conquered_this_turn"):
-        card = make_card()
-        p["cards"].append(card)
-        log(f"{p['name']} draws a {card['type']} card for conquering territory.")
+        card = draw_card()
+        if card:
+            p["cards"].append(card)
+            add_stat(pid, "cards_drawn")
+            log(f"{p['name']} draws a {card['type']} card for conquering territory.")
+        else:
+            log(f"{p['name']} earned a card, but the reinforcement deck is empty.")
 
     next_pid = next_active_player(pid)
     if next_pid <= pid:
@@ -453,6 +578,80 @@ def valid_clicks() -> dict:
     return clicks
 
 
+def player_cards_for_client(pid: int) -> list[dict]:
+    if GAME.get("winner_id"):
+        return GAME["players"].get(str(pid), {}).get("cards", [])
+    if pid == current_player_id() and not is_ai_player(pid):
+        return GAME["players"].get(str(pid), {}).get("cards", [])
+    return []
+
+
+def effective_mission_text(pid: int) -> str | None:
+    if GAME.get("mode") != "missions":
+        return None
+    player = GAME["players"].get(str(pid), {})
+    mission = MISSION_BY_ID.get(player.get("mission_id", ""))
+    if not mission:
+        return None
+    text = mission["text"]
+    target = mission.get("target")
+    if mission["kind"] == "destroy" and target and (target == pid or str(target) not in GAME["players"]):
+        text += " Effective objective: Occupy 24 Territories of your choice."
+    return text
+
+
+def public_winner() -> dict | None:
+    wid = int(GAME.get("winner_id") or 0)
+    if not wid or str(wid) not in GAME["players"]:
+        return None
+    p = GAME["players"][str(wid)]
+    return {"id": wid, "name": p["name"], "colour": PLAYER_COLOURS[wid]}
+
+
+def card_summary(cards: list[dict]) -> dict:
+    by_type = {typ: 0 for typ in CARD_TYPES}
+    for card in cards:
+        by_type[card["type"]] = by_type.get(card["type"], 0) + 1
+    return {
+        "count": len(cards),
+        "by_type": by_type,
+        "cards": cards,
+    }
+
+
+def victory_summary() -> dict | None:
+    winner_data = public_winner()
+    if not winner_data:
+        return None
+    commanders = []
+    for pid_s in sorted(GAME["players"], key=lambda x: int(x)):
+        pid = int(pid_s)
+        p = GAME["players"][pid_s]
+        commanders.append({
+            "id": pid,
+            "name": p["name"],
+            "kind": p.get("kind", "human"),
+            "ai_personality": p.get("ai_personality"),
+            "colour": PLAYER_COLOURS[pid],
+            "eliminated": p.get("eliminated", False),
+            "eliminated_by": p.get("eliminated_by", 0),
+            "territory_count": len(player_territories(pid)),
+            "army_count": player_total_armies(pid),
+            "reserve": p.get("reserve", 0),
+            "continent_bonus": continent_bonus(pid),
+            "mission": effective_mission_text(pid),
+            "mission_complete": completed_mission(pid),
+            "stats": ensure_stats(pid),
+            "cards": card_summary(p.get("cards", [])),
+        })
+    return {
+        "mode": GAME.get("mode", "global"),
+        "turn": GAME.get("turn", 0),
+        "winner": winner_data,
+        "commanders": commanders,
+    }
+
+
 def public_state() -> dict:
     players = []
     for pid_s in sorted(GAME["players"], key=lambda x: int(x)):
@@ -462,10 +661,13 @@ def public_state() -> dict:
         players.append({
             "id": pid,
             "name": p["name"],
+            "kind": p.get("kind", "human"),
+            "ai_personality": p.get("ai_personality"),
             "colour": PLAYER_COLOURS[pid],
             "reserve": p["reserve"],
-            "cards": p["cards"],
+            "cards": player_cards_for_client(pid),
             "card_count": len(p["cards"]),
+            "card_faces_hidden": bool(len(p["cards"]) and not player_cards_for_client(pid)),
             "territory_count": len(terrs),
             "army_count": player_total_armies(pid),
             "continent_bonus": continent_bonus(pid),
@@ -494,11 +696,14 @@ def public_state() -> dict:
         "pending_attack": GAME.get("pending_attack"),
         "last_battle": GAME.get("last_battle"),
         "selected": GAME.get("selected"),
-        "current_mission": visible_mission(current_player_id()),
+        "current_mission": None if is_ai_player(current_player_id()) else visible_mission(current_player_id()),
         "trade_count": GAME["trade_count"],
         "next_trade_value": trade_value(),
         "must_trade": bool(current_player_id() and must_trade_cards(current_player_id()) and GAME["phase"] == "reinforce"),
-        "winner": winner(),
+        "winner": public_winner(),
+        "victory_summary": victory_summary(),
+        "ai_personalities": list(AI_PERSONALITIES.keys()),
+        "default_ai_personalities": DEFAULT_PERSONALITY_BY_PLAYER,
         "log": GAME["log"],
     }
 
@@ -606,7 +811,11 @@ def generate_svg(map_data: list[tuple], owner_fills: bool = True) -> str:
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        ai_personalities=list(AI_PERSONALITIES.keys()),
+        default_ai_personalities=DEFAULT_PERSONALITY_BY_PLAYER,
+    )
 
 
 @app.get("/api/state")
@@ -620,12 +829,512 @@ def api_svg():
     return Response(generate_svg(map_data_from_state(), owner_fills=owner_fills), mimetype="image/svg+xml")
 
 
+def valid_trade_sets(cards: list[dict]) -> list[tuple[dict, dict, dict]]:
+    return [combo for combo in combinations(cards, 3) if is_valid_trade(list(combo))]
+
+
+def choose_trade_set(pid: int) -> list[dict] | None:
+    cards = GAME["players"][str(pid)]["cards"]
+    sets = valid_trade_sets(cards)
+    if not sets:
+        return None
+
+    def score(combo: tuple[dict, dict, dict]) -> float:
+        owned_bonus = sum(1 for card in combo if owner(card["territory"]) == pid)
+        type_spread = len({card["type"] for card in combo})
+        return owned_bonus * 3 + type_spread + random() * 0.1
+
+    return list(max(sets, key=score))
+
+
+def apply_card_trade(pid: int, cards: list[dict]) -> str:
+    p = GAME["players"][str(pid)]
+    ids = {card["id"] for card in cards}
+    value = trade_value()
+    p["cards"] = [card for card in p["cards"] if card["id"] not in ids]
+    discard_cards(cards)
+    p["reserve"] += value
+    add_stat(pid, "trade_armies", value)
+    add_stat(pid, "cards_traded", len(cards))
+    GAME["trade_count"] += 1
+
+    bonus_safes = apply_trade_bonus(pid, cards)
+    if bonus_safes:
+        names = ", ".join(territory_name(safe) for safe in bonus_safes)
+        plural = "territories" if len(bonus_safes) > 1 else "territory"
+        message = f"{p['name']} trades cards for {value} armies and gains the matching-territory +2 on {plural}: {names}."
+    else:
+        message = f"{p['name']} trades cards for {value} reserve armies."
+    log(message)
+    return message
+
+
+def enemy_neighbours(safe: str, pid: int) -> list[str]:
+    return [n for n in neighbours(safe) if owner(n) not in (0, pid)]
+
+
+def friendly_neighbours(safe: str, pid: int) -> list[str]:
+    return [n for n in neighbours(safe) if owner(n) == pid]
+
+
+def enemy_pressure(safe: str, pid: int) -> int:
+    return sum(strength(n) for n in enemy_neighbours(safe, pid))
+
+
+def friendly_support(safe: str, pid: int) -> int:
+    return sum(strength(n) for n in friendly_neighbours(safe, pid))
+
+
+def border_count(safe: str, pid: int) -> int:
+    return len(enemy_neighbours(safe, pid))
+
+
+def continent_ratio(pid: int, continent: str) -> float:
+    terrs = CONTINENTS[continent]
+    return sum(1 for safe in terrs if owner(safe) == pid) / len(terrs)
+
+
+def territory_continent_value(pid: int, safe: str) -> float:
+    continent = TERRITORY_CONTINENT.get(safe)
+    if not continent:
+        return 0.0
+    ratio = continent_ratio(pid, continent)
+    return ratio * ratio * CONTINENT_BONUS[continent]
+
+
+def mission_continents(pid: int) -> list[str]:
+    mission = MISSION_BY_ID.get(GAME["players"].get(str(pid), {}).get("mission_id", ""))
+    if GAME.get("mode") != "missions" or not mission:
+        return []
+    if mission["kind"] == "continents":
+        return list(mission["continents"])
+    return []
+
+
+def destroy_target(pid: int) -> int | None:
+    mission = MISSION_BY_ID.get(GAME["players"].get(str(pid), {}).get("mission_id", ""))
+    if GAME.get("mode") != "missions" or not mission or mission["kind"] != "destroy":
+        return None
+    target = int(mission["target"])
+    if target == pid or str(target) not in GAME["players"]:
+        return None
+    return target
+
+
+def mission_deploy_value(pid: int, safe: str) -> float:
+    if GAME.get("mode") != "missions":
+        return 0.0
+    mission = MISSION_BY_ID.get(GAME["players"].get(str(pid), {}).get("mission_id", ""))
+    if not mission:
+        return 0.0
+    kind = mission["kind"]
+    if kind == "occupy":
+        if mission.get("min_strength", 1) >= 2 and strength(safe) < 2:
+            return 5.0
+        return 0.75 if border_count(safe, pid) else 0.25
+    if kind == "continents":
+        continent = TERRITORY_CONTINENT.get(safe)
+        if continent in mission["continents"]:
+            return 3.0 + 2.0 * continent_ratio(pid, continent)
+        if any(n in sum((CONTINENTS[c] for c in mission["continents"]), []) for n in neighbours(safe)):
+            return 0.8
+    if kind == "destroy":
+        target = destroy_target(pid)
+        if target is None:
+            return 0.75 if len(player_territories(pid)) < 24 else 0.0
+        return 3.0 if any(owner(n) == target for n in neighbours(safe)) else 0.0
+    return 0.0
+
+
+def mission_attack_value(pid: int, dst: str) -> float:
+    if GAME.get("mode") != "missions":
+        return 0.0
+    mission = MISSION_BY_ID.get(GAME["players"].get(str(pid), {}).get("mission_id", ""))
+    if not mission:
+        return 0.0
+    kind = mission["kind"]
+    if kind == "occupy":
+        value = 2.0
+        if mission.get("min_strength", 1) >= 2:
+            value += 1.0
+        return value
+    if kind == "continents":
+        continent = TERRITORY_CONTINENT.get(dst)
+        if continent in mission["continents"]:
+            return 5.0 + 3.0 * continent_ratio(pid, continent)
+        return 0.0
+    if kind == "destroy":
+        target = destroy_target(pid)
+        if target is None:
+            return 2.0
+        return 7.5 if owner(dst) == target else 0.0
+    return 0.0
+
+
+def would_break_enemy_continent(target_pid: int, dst: str) -> float:
+    if not target_pid:
+        return 0.0
+    continent = TERRITORY_CONTINENT.get(dst)
+    if not continent:
+        return 0.0
+    if all(owner(safe) == target_pid for safe in CONTINENTS[continent]):
+        return CONTINENT_BONUS[continent]
+    return 0.0
+
+
+def choose_scored(scored: list[tuple[float, object]], top_n: int = 3):
+    if not scored:
+        return None
+    scored = sorted(scored, key=lambda item: item[0], reverse=True)
+    top = scored[:max(1, min(top_n, len(scored)))]
+    # Favour the top score but keep a little variation between games.
+    return max(top, key=lambda item: item[0] + random() * 0.25)[1]
+
+
+def deploy_score(pid: int, safe: str) -> float:
+    w = personality(pid)
+    pressure = enemy_pressure(safe, pid)
+    opportunity = sum(max(0, strength(safe) - strength(n)) for n in enemy_neighbours(safe, pid))
+    under_defended = max(0, pressure - strength(safe))
+    return (
+        1.0
+        + w["defense_bias"] * (1.8 * border_count(safe, pid) + 0.35 * pressure + 0.55 * under_defended)
+        + w["attack_bias"] * 0.38 * opportunity
+        + w["continent_bias"] * territory_continent_value(pid, safe)
+        + w["mission_focus"] * mission_deploy_value(pid, safe)
+        + w["choke_bias"] * 2.0 * CHOKE_VALUES.get(safe, 0.0)
+        + random() * 0.08
+    )
+
+
+def choose_deploy_territory(pid: int) -> str | None:
+    owned = player_territories(pid)
+    if not owned:
+        return None
+    return choose_scored([(deploy_score(pid, safe), safe) for safe in owned])
+
+
+def deploy_one_ai_army(pid: int, setup: bool = False) -> str:
+    p = GAME["players"][str(pid)]
+    safe = choose_deploy_territory(pid)
+    if not safe or p["reserve"] <= 0:
+        return "No deployment available."
+    set_strength(safe, strength(safe) + 1)
+    p["reserve"] -= 1
+    log(f"{p['name']} deploys 1 army to {territory_name(safe)}.")
+    if setup:
+        advance_initial_deploy_turn()
+    check_victory(pid)
+    return f"deployed to {territory_name(safe)}"
+
+
+def deploy_all_ai_reserves(pid: int) -> str:
+    p = GAME["players"][str(pid)]
+    placed = []
+    while p["reserve"] > 0:
+        safe = choose_deploy_territory(pid)
+        if not safe:
+            break
+        set_strength(safe, strength(safe) + 1)
+        p["reserve"] -= 1
+        placed.append(safe)
+    if placed:
+        summary = ", ".join(territory_name(safe) for safe in placed[:5])
+        extra = "…" if len(placed) > 5 else ""
+        log(f"{p['name']} deploys {len(placed)} reserve armies ({summary}{extra}).")
+    return f"deployed {len(placed)} reserve armies"
+
+
+def attack_candidate_score(pid: int, src: str, dst: str) -> float:
+    w = personality(pid)
+    attack_armies = max(0, strength(src) - 1)
+    defence = max(1, strength(dst))
+    odds = attack_armies / defence
+    target_pid = owner(dst)
+    target_territories = len(player_territories(target_pid)) if target_pid else 0
+    elimination = 9.0 if target_pid and target_territories == 1 else (3.0 if target_pid and target_territories <= 3 else 0.0)
+    card_value = 3.0 if not GAME["players"][str(pid)].get("conquered_this_turn") and defence <= max(1, attack_armies) else 0.0
+    source_exposure = max(0, enemy_pressure(src, pid) - (strength(src) - 1))
+    return (
+        w["attack_bias"] * 3.4 * odds
+        + w["mission_focus"] * mission_attack_value(pid, dst)
+        + w["continent_bias"] * (territory_continent_value(pid, dst) + would_break_enemy_continent(target_pid, dst))
+        + w["card_hunter"] * card_value
+        + w["opportunism"] * (elimination + max(0, 2.0 - defence) + 0.55 * len(GAME["players"].get(str(target_pid), {}).get("cards", [])))
+        + w["choke_bias"] * CHOKE_VALUES.get(dst, 0.0)
+        - w["defense_bias"] * 0.35 * source_exposure
+        + random() * 0.12
+    )
+
+
+def choose_attack(pid: int) -> tuple[str, str] | None:
+    w = personality(pid)
+    candidates = []
+    for src in valid_attackers(pid):
+        for dst in valid_attack_targets(src, pid):
+            attack_armies = strength(src) - 1
+            defence = max(1, strength(dst))
+            odds = attack_armies / defence
+            score = attack_candidate_score(pid, src, dst)
+            threshold = 3.15 - 1.45 * w["risk"]
+            mission_bonus = mission_attack_value(pid, dst)
+            if odds >= (1.10 + 1.15 * (1.0 - w["risk"])) or score >= threshold + mission_bonus * 0.35:
+                candidates.append((score, (src, dst)))
+    if not candidates:
+        return None
+    # Cautious players often stop after earning their one card.
+    if GAME["players"][str(pid)].get("conquered_this_turn") and w["risk"] < 0.38 and random() > w["risk"]:
+        return None
+    return choose_scored(candidates)
+
+
+def ai_attack_dice(pid: int, src: str, dst: str) -> int:
+    max_attack = min(3, strength(src) - 1)
+    if max_attack <= 1:
+        return 1
+    w = personality(pid)
+    odds = (strength(src) - 1) / max(1, strength(dst))
+    if w["risk"] < 0.32 and odds < 2.5:
+        return min(max_attack, 2)
+    return max_attack
+
+
+def ai_advance_armies(pid: int, src: str, dst: str, attack_dice: int) -> int:
+    max_advance = max(1, strength(src) - 1)
+    min_advance = min(attack_dice, max_advance)
+    w = personality(pid)
+    target_pressure = enemy_pressure(dst, pid)
+    source_pressure = enemy_pressure(src, pid)
+    if w["advance_bias"] >= 0.75 or mission_attack_value(pid, dst) >= 5:
+        return max_advance
+    if w["advance_bias"] <= 0.35 and source_pressure > target_pressure:
+        return min_advance
+    desired = round(min_advance + (max_advance - min_advance) * w["advance_bias"])
+    if target_pressure > source_pressure:
+        desired += 1
+    return max(min_advance, min(max_advance, desired))
+
+
+def resolve_pending_attack(attack_dice: int, defence_dice: int, advance_armies: int) -> tuple[bool, str]:
+    if GAME["phase"] != "attack" or not GAME.get("pending_attack"):
+        return False, "No attack is pending."
+
+    pid = current_player_id()
+    p = GAME["players"][str(pid)]
+    attack = GAME["pending_attack"]
+    src, dst = attack["from"], attack["to"]
+
+    if owner(src) != pid or owner(dst) in (0, pid) or dst not in neighbours(src) or strength(src) <= 1:
+        GAME["pending_attack"] = None
+        return False, "Attack is no longer valid."
+
+    max_attack = min(3, strength(src) - 1)
+    attack_dice = max(1, min(int(attack_dice), max_attack))
+    max_defence = min(2, strength(dst))
+    defence_dice = max(1, min(int(defence_dice), max_defence))
+
+    attacker_rolls = sorted([randint(1, 6) for _ in range(attack_dice)], reverse=True)
+    defender_rolls = sorted([randint(1, 6) for _ in range(defence_dice)], reverse=True)
+
+    attacker_losses = 0
+    defender_losses = 0
+    comparisons = []
+    for a, d in zip(attacker_rolls, defender_rolls):
+        if a > d:
+            defender_losses += 1
+            comparisons.append({"a": a, "d": d, "winner": "attacker"})
+        else:
+            attacker_losses += 1
+            comparisons.append({"a": a, "d": d, "winner": "defender"})
+
+    add_stat(pid, "attacks")
+    add_stat(pid, "armies_lost", attacker_losses)
+    defending_pid = owner(dst)
+    add_stat(defending_pid, "armies_lost", defender_losses)
+
+    set_strength(src, strength(src) - attacker_losses)
+    set_strength(dst, strength(dst) - defender_losses)
+    conquered = False
+    old_owner = owner(dst)
+    advance = 0
+
+    if strength(dst) <= 0:
+        conquered = True
+        advance_max = max(1, strength(src) - 1)
+        advance_min = min(attack_dice, advance_max)
+        advance = max(advance_min, min(int(advance_armies), advance_max))
+        set_owner(dst, pid)
+        set_strength(dst, advance)
+        set_strength(src, strength(src) - advance)
+        p["conquered_this_turn"] = True
+        GAME["pending_attack"] = None
+        GAME["selected"] = src if strength(src) > 1 else None
+        add_stat(pid, "territories_conquered")
+        add_stat(old_owner, "territories_lost")
+        log(f"{p['name']} conquers {territory_name(dst)} and advances {advance} armies.")
+        if old_owner:
+            check_eliminations(conqueror_pid=pid)
+        check_victory(pid)
+    else:
+        if strength(src) <= 1:
+            GAME["pending_attack"] = None
+            GAME["selected"] = None
+            log(f"{p['name']}'s attack stalls at {territory_name(src)}.")
+        else:
+            GAME["pending_attack"]["max_attack_dice"] = min(3, strength(src) - 1)
+            GAME["pending_attack"]["max_defence_dice"] = min(2, strength(dst))
+
+    GAME["last_battle"] = {
+        "from": src,
+        "to": dst,
+        "from_name": territory_name(src),
+        "to_name": territory_name(dst),
+        "attacker_rolls": attacker_rolls,
+        "defender_rolls": defender_rolls,
+        "attacker_losses": attacker_losses,
+        "defender_losses": defender_losses,
+        "comparisons": comparisons,
+        "conquered": conquered,
+        "advance": advance,
+        "old_owner": old_owner,
+    }
+    if not conquered:
+        log(f"Battle: {territory_name(src)} rolls {attacker_rolls}; {territory_name(dst)} rolls {defender_rolls}. Losses {attacker_losses}/{defender_losses}.")
+    return True, "attack resolved"
+
+
+def choose_move(pid: int) -> tuple[str, str, int] | None:
+    w = personality(pid)
+    candidates = []
+    for src in valid_movers(pid):
+        source_pressure = enemy_pressure(src, pid)
+        movable = strength(src) - 1
+        if movable <= 0:
+            continue
+        for dst in valid_move_targets(src, pid):
+            target_pressure = enemy_pressure(dst, pid)
+            if target_pressure <= source_pressure and border_count(dst, pid) <= border_count(src, pid):
+                continue
+            score = (
+                w["defense_bias"] * (target_pressure - source_pressure)
+                + w["choke_bias"] * (CHOKE_VALUES.get(dst, 0.0) - CHOKE_VALUES.get(src, 0.0)) * 2.2
+                + w["continent_bias"] * territory_continent_value(pid, dst) * 0.35
+                + w["mission_focus"] * mission_deploy_value(pid, dst) * 0.5
+                + random() * 0.05
+            )
+            if score > 0:
+                amount = max(1, round(movable * (0.35 + 0.45 * w["advance_bias"])))
+                candidates.append((score, (src, dst, min(movable, amount))))
+    return choose_scored(candidates)
+
+
+def perform_ai_move(pid: int, move: tuple[str, str, int] | None) -> str:
+    if not move:
+        log(f"{GAME['players'][str(pid)]['name']} declines to move armies.")
+        return "declined move"
+    src, dst, amount = move
+    amount = max(1, min(amount, strength(src) - 1))
+    set_strength(src, strength(src) - amount)
+    set_strength(dst, strength(dst) + amount)
+    add_stat(pid, "moves")
+    log(f"{GAME['players'][str(pid)]['name']} moves {amount} armies from {territory_name(src)} to {territory_name(dst)}.")
+    check_victory(pid)
+    return f"moved {amount} from {territory_name(src)} to {territory_name(dst)}"
+
+
+def ai_step_once() -> tuple[bool, str]:
+    if not GAME["started"]:
+        return False, "Start a game first."
+    if GAME.get("winner_id"):
+        return True, "game over"
+    pid = current_player_id()
+    if not pid or not is_ai_player(pid):
+        return False, "Current player is not an AI commander."
+
+    p = GAME["players"][str(pid)]
+    phase = GAME["phase"]
+
+    if phase == "initial_deploy":
+        if p["reserve"] > 0:
+            return True, deploy_one_ai_army(pid, setup=True)
+        advance_initial_deploy_turn()
+        return True, "advanced setup deployment"
+
+    if phase == "reinforce":
+        trade_set = choose_trade_set(pid)
+        should_trade = trade_set and (must_trade_cards(pid) or (len(p["cards"]) >= 3 and personality(pid)["trade_eagerness"] > 0.5 and p["reserve"] <= 1))
+        if should_trade:
+            return True, apply_card_trade(pid, trade_set)
+        if p["reserve"] > 0:
+            return True, deploy_all_ai_reserves(pid)
+        GAME["phase"] = "attack"
+        GAME["selected"] = None
+        GAME["pending_attack"] = None
+        GAME["last_battle"] = None
+        log(f"{p['name']} advances to Attack.")
+        return True, "advanced to attack"
+
+    if phase == "attack":
+        if GAME.get("pending_attack"):
+            src = GAME["pending_attack"]["from"]
+            dst = GAME["pending_attack"]["to"]
+            attack_dice = ai_attack_dice(pid, src, dst)
+            defence_dice = min(2, strength(dst))
+            advance = ai_advance_armies(pid, src, dst, attack_dice)
+            ok, msg = resolve_pending_attack(attack_dice, defence_dice, advance)
+            return ok, msg
+
+        chosen = choose_attack(pid)
+        if chosen:
+            src, dst = chosen
+            GAME["selected"] = src
+            GAME["pending_attack"] = {
+                "from": src,
+                "to": dst,
+                "max_attack_dice": min(3, strength(src) - 1),
+                "max_defence_dice": min(2, strength(dst)),
+            }
+            log(f"{p['name']} prepares to attack {territory_name(dst)} from {territory_name(src)}.")
+            return True, f"prepared attack from {territory_name(src)} to {territory_name(dst)}"
+
+        GAME["phase"] = "move"
+        GAME["selected"] = None
+        GAME["pending_attack"] = None
+        log(f"{p['name']} advances to Move.")
+        return True, "advanced to move"
+
+    if phase == "move":
+        perform_ai_move(pid, choose_move(pid))
+        if not GAME.get("winner_id"):
+            finish_turn_after_move()
+        return True, "finished move"
+
+    return False, "AI cannot act in this phase."
+
 @app.post("/api/new")
 def api_new():
     global GAME
     data = request.get_json(force=True) or {}
-    names = [str(name).strip() for name in data.get("players", []) if str(name).strip()]
-    if not 2 <= len(names) <= 6:
+    raw_players = data.get("players", [])
+    configs = []
+    for i, item in enumerate(raw_players, start=1):
+        if isinstance(item, dict):
+            name = str(item.get("name", "")).strip()
+            kind = str(item.get("kind", "human")).strip().lower()
+            ai_persona = str(item.get("ai_personality") or DEFAULT_PERSONALITY_BY_PLAYER.get(i, "Balanced General")).strip()
+        else:
+            name = str(item).strip()
+            kind = "human"
+            ai_persona = DEFAULT_PERSONALITY_BY_PLAYER.get(i, "Balanced General")
+        if not name:
+            continue
+        if kind not in {"human", "ai"}:
+            kind = "human"
+        if ai_persona not in AI_PERSONALITIES:
+            ai_persona = DEFAULT_PERSONALITY_BY_PLAYER.get(i, "Balanced General")
+        configs.append({"name": name, "kind": kind, "ai_personality": ai_persona})
+
+    if not 2 <= len(configs) <= 6:
         return jsonify({"ok": False, "error": "Use between 2 and 6 players."}), 400
     mode = str(data.get("mode", "global")).strip().lower()
     if mode not in {"global", "missions"}:
@@ -637,34 +1346,39 @@ def api_new():
     GAME["phase"] = "initial_deploy"
     GAME["turn"] = 0
 
-    for i, name in enumerate(names, start=1):
+    for i, cfg in enumerate(configs, start=1):
         GAME["players"][str(i)] = {
             "id": i,
-            "name": name,
-            "reserve": INITIAL_ARMIES[len(names)],
+            "name": cfg["name"],
+            "kind": cfg["kind"],
+            "ai_personality": cfg["ai_personality"],
+            "reserve": INITIAL_ARMIES[len(configs)],
             "cards": [],
             "mission_id": None,
             "conquered_this_turn": False,
             "eliminated": False,
         }
+        ensure_stats(i)
 
     if mode == "missions":
         mission_deck = MISSION_DECK[:]
         shuffle(mission_deck)
-        for i in range(1, len(names) + 1):
+        for i in range(1, len(configs) + 1):
             GAME["players"][str(i)]["mission_id"] = mission_deck.pop()["id"]
 
     deck = TERRITORY_ORDER[:]
     shuffle(deck)
     for i, safe in enumerate(deck):
-        pid = (i % len(names)) + 1
+        pid = (i % len(configs)) + 1
         set_owner(safe, pid)
         set_strength(safe, 1)
         GAME["players"][str(pid)]["reserve"] -= 1
 
     GAME["current_player"] = 1
     mode_name = "Secret Missions" if mode == "missions" else "Global Domination"
-    log(f"{mode_name}: territory cards dealt to {len(names)} commanders. Initial deployment begins.")
+    ai_count = sum(1 for cfg in configs if cfg["kind"] == "ai")
+    ai_note = f" with {ai_count} AI commanders" if ai_count else ""
+    log(f"{mode_name}: territory cards dealt to {len(configs)} commanders{ai_note}. Initial deployment begins.")
     return jsonify({"ok": True, "state": public_state()})
 
 
@@ -731,6 +1445,7 @@ def api_click():
             amount = min(amount, strength(selected) - 1)
             set_strength(selected, strength(selected) - amount)
             set_strength(safe, strength(safe) + amount)
+            add_stat(pid, "moves")
             log(f"{p['name']} moves {amount} armies from {territory_name(selected)} to {territory_name(safe)}.")
             GAME["selected"] = None
             check_victory(pid)
@@ -781,6 +1496,11 @@ def api_attack_roll():
             attacker_losses += 1
             comparisons.append({"a": a, "d": d, "winner": "defender"})
 
+    add_stat(pid, "attacks")
+    add_stat(pid, "armies_lost", attacker_losses)
+    defending_pid = owner(dst)
+    add_stat(defending_pid, "armies_lost", defender_losses)
+
     set_strength(src, strength(src) - attacker_losses)
     set_strength(dst, strength(dst) - defender_losses)
     conquered = False
@@ -802,6 +1522,8 @@ def api_attack_roll():
         p["conquered_this_turn"] = True
         GAME["pending_attack"] = None
         GAME["selected"] = src if strength(src) > 1 else None
+        add_stat(pid, "territories_conquered")
+        add_stat(old_owner, "territories_lost")
         log(f"{p['name']} conquers {territory_name(dst)} and advances {advance} armies.")
         if old_owner:
             check_eliminations(conqueror_pid=pid)
@@ -853,17 +1575,7 @@ def api_trade_cards():
     if not is_valid_trade(cards):
         return jsonify({"ok": False, "error": "Trade must be three matching cards or one of each type."}), 400
 
-    value = trade_value()
-    p["cards"] = [c for c in p["cards"] if c["id"] not in ids]
-    p["reserve"] += value
-    GAME["trade_count"] += 1
-
-    bonus_safe = next((c["territory"] for c in cards if owner(c["territory"]) == pid), None)
-    if bonus_safe:
-        set_strength(bonus_safe, strength(bonus_safe) + 2)
-        log(f"{p['name']} trades cards for {value} armies and gains +2 on {territory_name(bonus_safe)}.")
-    else:
-        log(f"{p['name']} trades cards for {value} reserve armies.")
+    apply_card_trade(pid, cards)
     check_victory(pid)
     return jsonify({"ok": True, "state": public_state()})
 
@@ -915,13 +1627,24 @@ def api_next_phase():
     return jsonify({"ok": False, "error": "No phase transition is available."}), 400
 
 
+
+@app.post("/api/ai/step")
+def api_ai_step():
+    ok, message = ai_step_once()
+    if not ok:
+        return jsonify({"ok": False, "error": message}), 400
+    return jsonify({"ok": True, "message": message, "state": public_state()})
+
 @app.post("/api/debug/card")
 def api_debug_card():
     # Handy during UI testing; remove or protect for production.
     if not GAME["started"]:
         return jsonify({"ok": False, "error": "No game."}), 400
     p = current_player()
-    p["cards"].append(make_card())
+    card = draw_card()
+    if not card:
+        return jsonify({"ok": False, "error": "No reinforcement cards are available."}), 400
+    p["cards"].append(card)
     return jsonify({"ok": True, "state": public_state()})
 
 
