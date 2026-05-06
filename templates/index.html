@@ -305,8 +305,22 @@
       outline: none;
     }
     input:focus, select:focus { border-color:#f3ca70; box-shadow:0 0 0 3px rgba(243,202,112,.15); }
-    #playerInputs { display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap:.7rem; margin:1rem 0 1.35rem; }
-    .player-input { width:100%; }
+    #playerInputs { display:grid; grid-template-columns: 1fr; gap:.7rem; margin:1rem 0 1.35rem; }
+    .player-config {
+      display:grid;
+      grid-template-columns: minmax(160px, 1fr) 110px minmax(190px, 1fr);
+      gap:.55rem;
+      align-items:center;
+      padding:.55rem;
+      border:1px solid rgba(255, 224, 140, .16);
+      border-radius:16px;
+      background:rgba(0,0,0,.12);
+    }
+    .player-input, .player-kind, .player-personality { width:100%; }
+    .player-config.human { grid-template-columns: minmax(160px, 1fr) 110px; }
+    .player-config.human .player-personality { display:none; }
+    .ai-note { display:block; color:#bca47d; font-size:.72rem; font-weight:600; margin-top:.12rem; }
+    @media (max-width: 720px) { .player-config { grid-template-columns: 1fr; } }
 
     .territory {
       cursor: pointer;
@@ -332,6 +346,52 @@
       height:16px;
       padding:0;
     }
+    .victory-panel.hidden { display:none; }
+    .victory-panel {
+      border-color: rgba(255, 224, 140, .42);
+      background:
+        linear-gradient(145deg, rgba(255, 224, 140, .08), transparent 35%),
+        linear-gradient(145deg, rgba(54, 37, 23, .94), rgba(20, 14, 10, .96));
+    }
+    .victory-panel h2 { color:#ffe7ad; }
+    .victory-winner {
+      display:flex;
+      align-items:center;
+      gap:.6rem;
+      padding:.72rem .78rem;
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:16px;
+      background:rgba(0,0,0,.18);
+      margin-bottom:.8rem;
+      font-weight:900;
+      color:#fff0c4;
+    }
+    .victory-list { display:grid; gap:.65rem; max-height:420px; overflow:auto; padding-right:.25rem; }
+    .victory-entry {
+      border:1px solid rgba(255,255,255,.1);
+      border-radius:16px;
+      background:rgba(0,0,0,.14);
+      padding:.72rem;
+    }
+    .victory-entry .line { color:#d8bd8e; font-size:.86rem; line-height:1.35; margin-top:.25rem; }
+    .victory-entry .mission { color:#f0d8a6; font-size:.82rem; line-height:1.35; margin-top:.45rem; }
+    .victory-entry .cards-held { color:#bfa783; font-size:.78rem; line-height:1.35; margin-top:.45rem; }
+    .card-back {
+      min-height: 122px;
+      border-radius: 15px;
+      padding: .85rem;
+      display:grid;
+      place-items:center;
+      text-align:center;
+      color:#f1d9a8;
+      border:1px solid rgba(255, 224, 140, .22);
+      background:
+        repeating-linear-gradient(45deg, rgba(255,224,140,.12) 0 6px, transparent 6px 12px),
+        linear-gradient(145deg, rgba(71, 38, 25, .86), rgba(19, 13, 9, .95));
+      box-shadow:0 10px 24px rgba(0,0,0,.2);
+      font-weight:800;
+    }
+
     .mission-slip {
       width: min(620px, 100%);
       margin: 14px 0 0 auto;
@@ -385,9 +445,10 @@
         <div class="combat-panel" id="combatPanel"></div>
 
         <div class="phase-controls">
-          <p class="phase-copy" id="phaseCopy">Use the campaign menu to create up to six human hot-seat players.</p>
+          <p class="phase-copy" id="phaseCopy">Use the campaign menu to create up to six human or AI commanders.</p>
           <div class="form-row" style="margin:0">
             <button id="stopAttackBtn" class="ghost danger" style="display:none">Stop attack</button>
+            <button id="aiStepBtn" class="ghost" style="display:none">AI step</button>
             <button id="nextPhaseBtn" class="success">Next phase</button>
             <button id="newGameBtn" class="ghost">New game</button>
           </div>
@@ -395,6 +456,11 @@
       </div>
 
       <aside class="side">
+        <section class="card panel victory-panel hidden" id="victoryPanel">
+          <h2>Victory dispatch</h2>
+          <div id="victoryContent"></div>
+        </section>
+
         <section class="card panel">
           <h2>Commanders</h2>
           <div id="playerTable"></div>
@@ -424,7 +490,7 @@
   <div class="modal" id="menuModal">
     <div class="menu-card">
       <h2>New Campaign</h2>
-      <p>Choose 2–6 hot-seat players and a victory mode. Territory cards are shuffled and dealt automatically; setup deployment then rotates one army at a time.</p>
+      <p>Choose 2–6 human or AI commanders, their personalities, and a victory mode. Territory cards are shuffled and dealt automatically; setup deployment then rotates one army at a time.</p>
       <div class="form-row">
         <label for="playerCount">Players</label>
         <select id="playerCount">
@@ -446,8 +512,12 @@
   <script>
     let state = null;
     let ownerFills = localStorage.getItem('risk_owner_fills') !== '0';
+    let aiTimer = null;
+    let aiBusy = false;
     const selectedCards = new Set();
     const $ = sel => document.querySelector(sel);
+    const AI_PERSONALITY_NAMES = {{ ai_personalities|tojson }};
+    const DEFAULT_AI_PERSONALITIES = {{ default_ai_personalities|tojson }};
 
     function toast(msg) {
       const el = $('#toast');
@@ -598,16 +668,20 @@
       $('#turnBadge').innerHTML = `<span class="phase-pill">${phaseLabel(state.phase)}</span><span>${current ? `Turn ${state.turn || 'setup'} · ${current.name}` : 'Start a campaign'}</span>`;
       $('#mapHint').textContent = hintText();
       $('#phaseCopy').textContent = phaseCopy();
-      $('#nextPhaseBtn').disabled = !state.started || Boolean(state.winner) || state.phase === 'initial_deploy';
-      $('#stopAttackBtn').style.display = state.phase === 'attack' ? 'inline-block' : 'none';
+      const aiTurn = Boolean(state.current && state.current.kind === 'ai' && !state.winner);
+      $('#nextPhaseBtn').disabled = !state.started || Boolean(state.winner) || state.phase === 'initial_deploy' || aiTurn;
+      $('#stopAttackBtn').style.display = state.phase === 'attack' && !aiTurn ? 'inline-block' : 'none';
+      $('#aiStepBtn').style.display = aiTurn ? 'inline-block' : 'none';
 
       renderPlayerTable();
       renderCards();
+      renderVictory();
       renderCombat();
       renderMission();
       renderLog();
 
       if (state.winner) toast(`${state.winner.name} wins the campaign.`);
+      scheduleAiIfNeeded();
     }
 
     function hintText() {
@@ -629,7 +703,7 @@
     }
 
     function phaseCopy() {
-      if (!state.started) return 'Use the campaign menu to create up to six human hot-seat players.';
+      if (!state.started) return 'Use the campaign menu to create up to six human or AI commanders.';
       if (state.phase === 'initial_deploy') return 'Initial setup: territories have been dealt. Players now rotate one army at a time until all setup reserves are placed; normal play then begins with Player 1.';
       if (state.phase === 'reinforce') return `Reinforce: deploy all reserve armies. Next card trade is worth ${state.next_trade_value} armies.`;
       if (state.phase === 'attack') return 'Attack: select an owned territory, then an adjacent enemy territory. Choose attacker dice, defender dice, and the advance amount used if the volley conquers.';
@@ -641,7 +715,7 @@
       if (!state.started) { $('#playerTable').innerHTML = '<div class="empty">No commanders yet.</div>'; return; }
       const rows = state.players.map(p => `
         <tr class="${p.id === state.current_player ? 'current' : ''}">
-          <td><span class="player-name"><span class="swatch" style="background:${p.colour.path}"></span>${p.name}${p.eliminated ? ' †' : ''}</span></td>
+          <td><span class="player-name"><span class="swatch" style="background:${p.colour.path}"></span>${p.name}${p.eliminated ? ' †' : ''}</span>${p.kind === 'ai' ? `<span class="ai-note">AI · ${p.ai_personality}</span>` : ''}</td>
           <td>${p.territory_count}</td>
           <td>${p.card_count}</td>
           <td>${p.reserve}</td>
@@ -657,9 +731,20 @@
 
     function renderCards() {
       const c = state.current;
+      const tradeBtn = $('#tradeBtn');
+      if (tradeBtn) tradeBtn.disabled = true;
       if (!state.started || !c) { $('#cardsPanel').innerHTML = '<div class="empty">Cards appear here after conquering territories.</div>'; return; }
       const must = state.must_trade ? '<p class="empty" style="color:#ffe08b">You must trade a set before leaving Reinforce.</p>' : '';
+      if (c.kind === 'ai' && !state.winner) {
+        selectedCards.clear();
+        const count = c.card_count || 0;
+        $('#cardsPanel').innerHTML = count
+          ? `<div class="cards-grid"><div class="card-back">${count} AI card${count === 1 ? '' : 's'} hidden</div></div>`
+          : '<div class="empty">AI has no cards.</div>';
+        return;
+      }
       if (!c.cards.length) { $('#cardsPanel').innerHTML = must + '<div class="empty">No cards.</div>'; return; }
+      if (tradeBtn && state.phase === 'reinforce' && !state.winner) tradeBtn.disabled = false;
       $('#cardsPanel').innerHTML = must + `<div class="cards-grid">${c.cards.map(card => `
         <div class="risk-card ${selectedCards.has(card.id) ? 'selected' : ''}" data-card="${card.id}">
           <div class="type">${card.type}</div>
@@ -668,6 +753,7 @@
         </div>`).join('')}</div>`;
       document.querySelectorAll('[data-card]').forEach(el => {
         el.addEventListener('click', () => {
+          if (state.winner) return;
           const id = el.dataset.card;
           if (selectedCards.has(id)) selectedCards.delete(id);
           else {
@@ -677,6 +763,36 @@
           renderCards();
         });
       });
+    }
+
+    function renderVictory() {
+      const panel = $('#victoryPanel');
+      const content = $('#victoryContent');
+      const summary = state?.victory_summary;
+      if (!summary || !state?.winner) {
+        panel.classList.add('hidden');
+        content.innerHTML = '';
+        return;
+      }
+      const missionRows = summary.mode === 'missions';
+      const commanderHtml = summary.commanders.map(p => {
+        const s = p.stats || {};
+        const byType = p.cards?.by_type || {};
+        const cardLine = `${p.cards?.count || 0} held · infantry ${byType.infantry || 0}, cavalry ${byType.cavalry || 0}, artillery ${byType.artillery || 0}`;
+        const cardNames = (p.cards?.cards || []).map(card => `${card.icon} ${card.territory_name}`).join(', ') || 'none';
+        return `<div class="victory-entry">
+          <div class="player-name"><span class="swatch" style="background:${p.colour.path}"></span>${p.name}${p.id === summary.winner.id ? ' — victor' : ''}${p.eliminated ? ' †' : ''}</div>
+          <div class="line">Territories ${p.territory_count} · armies ${p.army_count} · reserve ${p.reserve} · continent bonus ${p.continent_bonus}</div>
+          <div class="line">Conquered ${s.territories_conquered || 0} · lost ${s.territories_lost || 0} · attacks ${s.attacks || 0} · army losses ${s.armies_lost || 0}</div>
+          <div class="line">Reinforcements ${s.reinforcements_received || 0} · trade armies ${s.trade_armies || 0} · card bonus armies ${s.trade_bonus_armies || 0} · cards drawn ${s.cards_drawn || 0}</div>
+          ${missionRows ? `<div class="mission"><strong>Mission:</strong> ${p.mission || 'none'} ${p.mission_complete ? '✓' : ''}</div>` : ''}
+          <div class="cards-held"><strong>Cards:</strong> ${cardLine}<br>${cardNames}</div>
+        </div>`;
+      }).join('');
+      content.innerHTML = `
+        <div class="victory-winner"><span class="swatch" style="background:${summary.winner.colour.path}"></span>${summary.winner.name} wins on turn ${summary.turn}.</div>
+        <div class="victory-list">${commanderHtml}</div>`;
+      panel.classList.remove('hidden');
     }
 
     function renderMission() {
@@ -824,17 +940,47 @@
       } catch (err) { toast(err.message); }
     }
 
+    function syncPlayerKind(row) {
+      const kind = row.querySelector('.player-kind').value;
+      const personality = row.querySelector('.player-personality');
+      row.classList.toggle('human', kind !== 'ai');
+      personality.disabled = kind !== 'ai';
+    }
+
     function renderPlayerInputs() {
       const n = Number($('#playerCount').value);
       const defaults = ['Crimson Marshal', 'Blue General', 'Green Duke', 'Golden Emperor', 'Black Baron', 'Rose Admiral'];
-      $('#playerInputs').innerHTML = Array.from({length:n}, (_, i) => `
-        <input class="player-input" value="${defaults[i]}" aria-label="Player ${i+1} name" />
-      `).join('');
+      $('#playerInputs').innerHTML = Array.from({length:n}, (_, i) => {
+        const pid = i + 1;
+        const persona = DEFAULT_AI_PERSONALITIES[String(pid)] || DEFAULT_AI_PERSONALITIES[pid] || AI_PERSONALITY_NAMES[0];
+        const options = AI_PERSONALITY_NAMES.map(name => `<option value="${name}" ${name === persona ? 'selected' : ''}>${name}</option>`).join('');
+        return `
+          <div class="player-config human" data-player-config="${pid}">
+            <input class="player-input" value="${defaults[i]}" aria-label="Player ${pid} name" />
+            <select class="player-kind" aria-label="Player ${pid} type">
+              <option value="human" selected>Human</option>
+              <option value="ai">AI</option>
+            </select>
+            <select class="player-personality" aria-label="Player ${pid} AI personality">${options}</select>
+          </div>`;
+      }).join('');
+      document.querySelectorAll('[data-player-config]').forEach(row => {
+        syncPlayerKind(row);
+        row.querySelector('.player-kind').addEventListener('change', () => syncPlayerKind(row));
+      });
+    }
+
+    function readPlayerConfigs() {
+      return [...document.querySelectorAll('[data-player-config]')].map(row => ({
+        name: row.querySelector('.player-input').value.trim(),
+        kind: row.querySelector('.player-kind').value,
+        ai_personality: row.querySelector('.player-personality').value
+      })).filter(p => p.name);
     }
 
     async function startGame() {
       try {
-        const players = [...document.querySelectorAll('.player-input')].map(x => x.value.trim()).filter(Boolean);
+        const players = readPlayerConfigs();
         const mode = $('#gameMode').value;
         const data = await api('/api/new', {method:'POST', body:{players, mode}});
         selectedCards.clear();
@@ -842,6 +988,30 @@
         renderState();
         await refreshSvg();
       } catch (err) { toast(err.message); }
+    }
+
+
+    async function aiStep() {
+      if (!state?.current || state.current.kind !== 'ai' || state.winner) return;
+      if (aiBusy) { scheduleAiIfNeeded(); return; }
+      aiBusy = true;
+      try {
+        const data = await api('/api/ai/step', {method:'POST', body:{}});
+        state = data.state;
+        selectedCards.clear();
+        renderState();
+        await refreshSvg();
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        aiBusy = false;
+      }
+    }
+
+    function scheduleAiIfNeeded() {
+      clearTimeout(aiTimer);
+      if (!state?.started || state?.winner || !state.current || state.current.kind !== 'ai') return;
+      aiTimer = setTimeout(aiStep, 520);
     }
 
 
@@ -858,6 +1028,7 @@
     $('#startBtn').addEventListener('click', startGame);
     $('#nextPhaseBtn').addEventListener('click', nextPhase);
     $('#stopAttackBtn').addEventListener('click', stopAttack);
+    $('#aiStepBtn').addEventListener('click', aiStep);
     $('#tradeBtn').addEventListener('click', tradeSelected);
     $('#debugCardBtn').addEventListener('click', debugCard);
     $('#newGameBtn').addEventListener('click', () => $('#menuModal').classList.remove('hidden'));
