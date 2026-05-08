@@ -1,6 +1,6 @@
 # raisk: a Risk UI using Python,HTML,CSS,SVG,JS
 
-### v0.1.2
+### v0.1.4
 
 ## Run
 
@@ -41,6 +41,7 @@ Open: http://127.0.0.1:5000
 - Move phase permits exactly one friendly transfer, or declining via Next Phase.
 - Attack UI permits selectable attack dice, defender dice, and conquest advance size.
 - Defeated players' cards transfer to the player who conquered their final territory.
+- Shift-click to place ten reinforcements per click instead of the usual one
 
 ## SVG click-layer notes
 
