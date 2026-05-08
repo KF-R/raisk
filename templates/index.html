@@ -580,7 +580,7 @@
       if (lastTerritoryActivation.safe === safe && now - lastTerritoryActivation.at < 220) return;
       lastTerritoryActivation = {safe, at: now};
 
-      territoryClick(safe);
+      territoryClick(safe, ev);
     }
 
     function delegatedTerritoryEvent(ev) {
@@ -689,7 +689,7 @@
       if (state.winner) return `${state.winner.name} controls the board.`;
       const c = state.current;
       if (state.phase === 'initial_deploy') return `${c.name}: place one army on one owned territory. ${c.reserve} setup armies remaining for this player.`;
-      if (state.phase === 'reinforce') return `${c.name}: deploy ${c.reserve} reserve armies. Trade cards first if required.`;
+      if (state.phase === 'reinforce') return `${c.name}: deploy ${c.reserve} reserve armies. Trade cards first if required. Shift-click places up to 10 armies.`;
       if (state.phase === 'attack') {
         if (state.pending_attack) return 'Choose attacker and defender dice, set the conquest advance amount, then roll.';
         if (state.selected) return `Attack from ${state.territories[state.selected].name}: choose a highlighted enemy territory.`;
@@ -705,7 +705,7 @@
     function phaseCopy() {
       if (!state.started) return 'Use the campaign menu to create up to six human or AI commanders.';
       if (state.phase === 'initial_deploy') return 'Initial setup: territories have been dealt. Players now rotate one army at a time until all setup reserves are placed; normal play then begins with Player 1.';
-      if (state.phase === 'reinforce') return `Reinforce: deploy all reserve armies. Next card trade is worth ${state.next_trade_value} armies.`;
+      if (state.phase === 'reinforce') return `Reinforce: deploy all reserve armies. Click to place one; Shift-click places up to ten, capped by available reserves. Next card trade is worth ${state.next_trade_value} armies.`;
       if (state.phase === 'attack') return 'Attack: select an owned territory, then an adjacent enemy territory. Choose attacker dice, defender dice, and the advance amount used if the volley conquers.';
       if (state.phase === 'move') return 'Move: make one adjacent friendly transfer. The turn ends immediately after that move, or use Next phase to decline moving.';
       return '';
@@ -864,9 +864,13 @@
       $('#logList').innerHTML = (state.log || []).map(item => `<div class="log-item">${item}</div>`).join('') || '<div class="empty">No record yet.</div>';
     }
 
-    async function territoryClick(safe) {
+    async function territoryClick(safe, ev = null) {
       try {
         const body = {territory: safe};
+        if (state.phase === 'reinforce' && ev?.shiftKey) {
+          const reserve = state.current?.reserve || 0;
+          body.amount = Math.max(1, Math.min(10, reserve));
+        }
         if (state.phase === 'move' && state.selected && state.valid_clicks.secondary.includes(safe)) {
           const fromStrength = state.territories[state.selected]?.strength || 1;
           const maxMove = Math.max(1, fromStrength - 1);
