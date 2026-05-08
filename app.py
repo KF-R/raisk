@@ -10,7 +10,7 @@ import uuid
 
 from flask import Flask, jsonify, render_template, request, Response
 
-from ai_personalities import AI_PERSONALITIES, CHOKE_VALUES, DEFAULT_PERSONALITY_BY_PLAYER
+from ai_personalities import AI_PERSONALITIES, CHOKE_VALUES, DEFAULT_PERSONALITY_BY_PLAYER, STRATEGIC_WEIGHTS
 
 app = Flask(__name__)
 
@@ -544,6 +544,11 @@ def valid_movers(pid: int) -> list[str]:
 
 
 def valid_move_targets(from_safe: str, pid: int) -> list[str]:
+    """Legal move-phase destinations: adjacent territories owned by the same player.
+
+    Earlier AI improvements briefly allowed owned connected-path movement, but this
+    UI/game variant intentionally uses the stricter adjacent-only transfer rule.
+    """
     if not from_safe or owner(from_safe) != pid or strength(from_safe) <= 1:
         return []
     return [n for n in neighbours(from_safe) if owner(n) == pid]
@@ -902,6 +907,102 @@ def territory_continent_value(pid: int, safe: str) -> float:
     return ratio * ratio * CONTINENT_BONUS[continent]
 
 
+def strategic_weight(name: str, default: float = 1.0) -> float:
+    return float(STRATEGIC_WEIGHTS.get(name, default))
+
+
+def continent_owner_counts(continent: str) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for safe in CONTINENTS[continent]:
+        pid = owner(safe)
+        if pid:
+            counts[pid] = counts.get(pid, 0) + 1
+    return counts
+
+
+def strongest_enemy_continent_ratio(pid: int, continent: str) -> float:
+    terrs = CONTINENTS[continent]
+    if not terrs:
+        return 0.0
+    counts = continent_owner_counts(continent)
+    return max((count / len(terrs) for enemy, count in counts.items() if enemy != pid), default=0.0)
+
+
+def opponent_continent_pressure(pid: int, safe: str) -> float:
+    """How urgent it is to contest this territory because another player is building a continent."""
+    continent = TERRITORY_CONTINENT.get(safe)
+    if not continent:
+        return 0.0
+    enemy_ratio = strongest_enemy_continent_ratio(pid, continent)
+    if enemy_ratio < 0.34:
+        return 0.0
+    bonus = CONTINENT_BONUS[continent]
+    local_enemy_armies = sum(strength(n) for n in enemy_neighbours(safe, pid))
+    return strategic_weight("enemy_continent_alert") * (enemy_ratio ** 2) * bonus + 0.08 * local_enemy_armies
+
+
+def enemy_continent_progress_value(target_pid: int, safe: str) -> float:
+    if not target_pid:
+        return 0.0
+    continent = TERRITORY_CONTINENT.get(safe)
+    if not continent:
+        return 0.0
+    terrs = CONTINENTS[continent]
+    ratio = sum(1 for terr in terrs if owner(terr) == target_pid) / len(terrs)
+    if ratio < 0.45:
+        return 0.0
+    return ratio * ratio * CONTINENT_BONUS[continent]
+
+
+def future_attack_options(safe: str, pid: int) -> float:
+    """Value of occupying or reinforcing a front with useful outward attacks."""
+    value = 0.0
+    local_strength = max(1, strength(safe))
+    for n in enemy_neighbours(safe, pid):
+        defender = max(1, strength(n))
+        value += max(0.0, (local_strength - 1) / defender - 0.9)
+        value += 0.25 * CHOKE_VALUES.get(n, 0.0)
+    return value
+
+
+def frontier_value(pid: int, safe: str) -> float:
+    return (
+        1.15 * border_count(safe, pid)
+        + 0.13 * enemy_pressure(safe, pid)
+        + 1.9 * CHOKE_VALUES.get(safe, 0.0)
+        + 0.28 * territory_continent_value(pid, safe)
+        + 0.55 * mission_deploy_value(pid, safe)
+        + 0.65 * opponent_continent_pressure(pid, safe)
+        + 0.45 * future_attack_options(safe, pid)
+    )
+
+
+def garrison_need(pid: int, safe: str) -> float:
+    """Soft target garrison; above this, extra armies are candidates for redeployment."""
+    borders = border_count(safe, pid)
+    if borders == 0:
+        # Interior territories should not keep large stacks unless they are
+        # unusually important mission/choke locations.
+        return 1.0 + 0.35 * CHOKE_VALUES.get(safe, 0.0) + 0.12 * mission_deploy_value(pid, safe)
+    return (
+        1.0
+        + 0.55 * borders
+        + 0.24 * enemy_pressure(safe, pid)
+        + 0.95 * CHOKE_VALUES.get(safe, 0.0)
+        + 0.18 * territory_continent_value(pid, safe)
+        + 0.22 * mission_deploy_value(pid, safe)
+        + 0.24 * opponent_continent_pressure(pid, safe)
+    )
+
+
+def overstack_penalty(pid: int, safe: str, setup: bool = False) -> float:
+    excess = max(0.0, strength(safe) - garrison_need(pid, safe))
+    if border_count(safe, pid) == 0:
+        excess += max(0.0, strength(safe) - 2.0) * strategic_weight("safe_stack_drain")
+    key = "setup_overstack_penalty" if setup else "reinforce_overstack_penalty"
+    return strategic_weight(key) * excess
+
+
 def mission_continents(pid: int) -> list[str]:
     mission = MISSION_BY_ID.get(GAME["players"].get(str(pid), {}).get("mission_id", ""))
     if GAME.get("mode") != "missions" or not mission:
@@ -991,32 +1092,37 @@ def choose_scored(scored: list[tuple[float, object]], top_n: int = 3):
     return max(top, key=lambda item: item[0] + random() * 0.25)[1]
 
 
-def deploy_score(pid: int, safe: str) -> float:
+def deploy_score(pid: int, safe: str, setup: bool = False) -> float:
     w = personality(pid)
     pressure = enemy_pressure(safe, pid)
-    opportunity = sum(max(0, strength(safe) - strength(n)) for n in enemy_neighbours(safe, pid))
-    under_defended = max(0, pressure - strength(safe))
+    opportunity = sum(max(0, strength(safe) - strength(n) + 1) for n in enemy_neighbours(safe, pid))
+    if setup:
+        opportunity = min(opportunity, 4) * 0.45
+    under_defended = max(0.0, garrison_need(pid, safe) - strength(safe))
+    reactive = opponent_continent_pressure(pid, safe) + 0.22 * enemy_pressure(safe, pid)
     return (
         1.0
-        + w["defense_bias"] * (1.8 * border_count(safe, pid) + 0.35 * pressure + 0.55 * under_defended)
-        + w["attack_bias"] * 0.38 * opportunity
+        + w["defense_bias"] * (1.3 * border_count(safe, pid) + 0.28 * pressure + 1.15 * under_defended)
+        + w["attack_bias"] * (0.26 if setup else 0.38) * opportunity
         + w["continent_bias"] * territory_continent_value(pid, safe)
         + w["mission_focus"] * mission_deploy_value(pid, safe)
-        + w["choke_bias"] * 2.0 * CHOKE_VALUES.get(safe, 0.0)
+        + w["choke_bias"] * 1.9 * CHOKE_VALUES.get(safe, 0.0)
+        + strategic_weight("reactivity") * reactive
+        - overstack_penalty(pid, safe, setup=setup)
         + random() * 0.08
     )
 
 
-def choose_deploy_territory(pid: int) -> str | None:
+def choose_deploy_territory(pid: int, setup: bool = False) -> str | None:
     owned = player_territories(pid)
     if not owned:
         return None
-    return choose_scored([(deploy_score(pid, safe), safe) for safe in owned])
+    return choose_scored([(deploy_score(pid, safe, setup=setup), safe) for safe in owned])
 
 
 def deploy_one_ai_army(pid: int, setup: bool = False) -> str:
     p = GAME["players"][str(pid)]
-    safe = choose_deploy_territory(pid)
+    safe = choose_deploy_territory(pid, setup=setup)
     if not safe or p["reserve"] <= 0:
         return "No deployment available."
     set_strength(safe, strength(safe) + 1)
@@ -1032,7 +1138,7 @@ def deploy_all_ai_reserves(pid: int) -> str:
     p = GAME["players"][str(pid)]
     placed = []
     while p["reserve"] > 0:
-        safe = choose_deploy_territory(pid)
+        safe = choose_deploy_territory(pid, setup=False)
         if not safe:
             break
         set_strength(safe, strength(safe) + 1)
@@ -1055,13 +1161,15 @@ def attack_candidate_score(pid: int, src: str, dst: str) -> float:
     elimination = 9.0 if target_pid and target_territories == 1 else (3.0 if target_pid and target_territories <= 3 else 0.0)
     card_value = 3.0 if not GAME["players"][str(pid)].get("conquered_this_turn") and defence <= max(1, attack_armies) else 0.0
     source_exposure = max(0, enemy_pressure(src, pid) - (strength(src) - 1))
+    enemy_strategy = enemy_continent_progress_value(target_pid, dst)
     return (
         w["attack_bias"] * 3.4 * odds
         + w["mission_focus"] * mission_attack_value(pid, dst)
-        + w["continent_bias"] * (territory_continent_value(pid, dst) + would_break_enemy_continent(target_pid, dst))
+        + w["continent_bias"] * (territory_continent_value(pid, dst) + would_break_enemy_continent(target_pid, dst) + 0.7 * enemy_strategy)
         + w["card_hunter"] * card_value
         + w["opportunism"] * (elimination + max(0, 2.0 - defence) + 0.55 * len(GAME["players"].get(str(target_pid), {}).get("cards", [])))
         + w["choke_bias"] * CHOKE_VALUES.get(dst, 0.0)
+        + strategic_weight("reactivity") * 0.45 * enemy_strategy
         - w["defense_bias"] * 0.35 * source_exposure
         + random() * 0.12
     )
@@ -1105,12 +1213,15 @@ def ai_advance_armies(pid: int, src: str, dst: str, attack_dice: int) -> int:
     w = personality(pid)
     target_pressure = enemy_pressure(dst, pid)
     source_pressure = enemy_pressure(src, pid)
-    if w["advance_bias"] >= 0.75 or mission_attack_value(pid, dst) >= 5:
+    forward_pull = frontier_value(pid, dst) - frontier_value(pid, src)
+    if source_pressure == 0 and target_pressure > 0:
         return max_advance
-    if w["advance_bias"] <= 0.35 and source_pressure > target_pressure:
+    if w["advance_bias"] >= 0.75 or mission_attack_value(pid, dst) >= 5 or forward_pull > 2.0:
+        return max_advance
+    if w["advance_bias"] <= 0.35 and source_pressure > target_pressure + 2:
         return min_advance
     desired = round(min_advance + (max_advance - min_advance) * w["advance_bias"])
-    if target_pressure > source_pressure:
+    if target_pressure > source_pressure or forward_pull > 0.8:
         desired += 1
     return max(min_advance, min(max_advance, desired))
 
@@ -1207,24 +1318,35 @@ def choose_move(pid: int) -> tuple[str, str, int] | None:
     w = personality(pid)
     candidates = []
     for src in valid_movers(pid):
-        source_pressure = enemy_pressure(src, pid)
-        movable = strength(src) - 1
-        if movable <= 0:
+        movable_total = strength(src) - 1
+        if movable_total <= 0:
             continue
+        source_need = garrison_need(pid, src)
+        source_excess = max(0.0, strength(src) - source_need)
+        if border_count(src, pid) == 0:
+            source_excess += max(0.0, strength(src) - 2.0) * strategic_weight("safe_stack_drain")
+        if source_excess <= 0.35:
+            continue
+        source_frontier = frontier_value(pid, src)
         for dst in valid_move_targets(src, pid):
-            target_pressure = enemy_pressure(dst, pid)
-            if target_pressure <= source_pressure and border_count(dst, pid) <= border_count(src, pid):
-                continue
+            target_need = garrison_need(pid, dst)
+            target_gap = max(0.0, target_need - strength(dst))
+            target_frontier = frontier_value(pid, dst)
+            pull = target_frontier - 0.55 * source_frontier + 1.25 * target_gap
             score = (
-                w["defense_bias"] * (target_pressure - source_pressure)
-                + w["choke_bias"] * (CHOKE_VALUES.get(dst, 0.0) - CHOKE_VALUES.get(src, 0.0)) * 2.2
-                + w["continent_bias"] * territory_continent_value(pid, dst) * 0.35
-                + w["mission_focus"] * mission_deploy_value(pid, dst) * 0.5
+                strategic_weight("friendly_path_fortify") * pull
+                + strategic_weight("frontier_redeploy_bias") * 0.85 * max(0.0, target_frontier - source_frontier)
+                + w["defense_bias"] * max(0, enemy_pressure(dst, pid) - enemy_pressure(src, pid)) * 0.45
+                + w["choke_bias"] * (CHOKE_VALUES.get(dst, 0.0) - CHOKE_VALUES.get(src, 0.0)) * 1.8
+                + w["mission_focus"] * (mission_deploy_value(pid, dst) - 0.35 * mission_deploy_value(pid, src))
                 + random() * 0.05
             )
-            if score > 0:
-                amount = max(1, round(movable * (0.35 + 0.45 * w["advance_bias"])))
-                candidates.append((score, (src, dst, min(movable, amount))))
+            if score > 0.65:
+                fraction = 0.35 + 0.45 * w["advance_bias"]
+                if border_count(src, pid) == 0 and border_count(dst, pid) > 0:
+                    fraction += 0.18
+                amount = max(1, round(min(movable_total, source_excess) * fraction))
+                candidates.append((score, (src, dst, min(movable_total, amount))))
     return choose_scored(candidates)
 
 
@@ -1401,9 +1523,17 @@ def api_click():
             return jsonify({"ok": False, "error": "You may only deploy to your own territories."}), 400
         if p["reserve"] <= 0:
             return jsonify({"ok": False, "error": "No reserve armies remain."}), 400
-        set_strength(safe, strength(safe) + 1)
-        p["reserve"] -= 1
-        log(f"{p['name']} deploys 1 army to {territory_name(safe)}.")
+        deploy_amount = 1
+        if phase == "reinforce":
+            try:
+                deploy_amount = int(data.get("amount", 1))
+            except (TypeError, ValueError):
+                deploy_amount = 1
+            deploy_amount = max(1, min(10, deploy_amount, p["reserve"]))
+        set_strength(safe, strength(safe) + deploy_amount)
+        p["reserve"] -= deploy_amount
+        army_word = "army" if deploy_amount == 1 else "armies"
+        log(f"{p['name']} deploys {deploy_amount} {army_word} to {territory_name(safe)}.")
         if phase == "initial_deploy":
             advance_initial_deploy_turn()
         check_victory(pid)
