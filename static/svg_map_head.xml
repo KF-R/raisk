@@ -2,11 +2,52 @@
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100%" height="100%" viewBox="182 114 720 405">
  <title>Risk game board</title>
- <desc>Risk game board by CMG Lee, the asterisk denoting the missing link in the 40th Anniversary Collector's Edition, based on shapes from http://commons.wikimedia.org/wiki/File:Risk_board.svg .</desc>
+ <desc>Risk territories based on shapes from http://commons.wikimedia.org/wiki/File:Risk_board.svg .</desc>
+ <style id="risk_static_styles">
+  #territory_names, #territory_names * { pointer-events: none; }
+  #region_labels, #region_labels * { pointer-events: none; }
+  #continents, #continents * { pointer-events: none; }
+  #attack_overlay, #attack_overlay * { pointer-events: none; }
+  #armies_deployed, #armies_deployed * { pointer-events: none; }
+  #territory_hit_layer { pointer-events: all; }
+  #territory_hit_layer .territory-hit { fill: #fff; fill-opacity: 0; stroke: none; pointer-events: all; cursor: pointer; }
+  #territory_hit_layer .valid-primary { fill-opacity: .015; stroke: #ffe68d; stroke-width: 3; stroke-opacity: .95; }
+  #territory_hit_layer .valid-secondary { fill-opacity: .015; stroke: #ff6b57; stroke-width: 3; stroke-opacity: .95; }
+  #territory_hit_layer .territory-selected { fill-opacity: .02; stroke: #fff4b4; stroke-width: 4; stroke-opacity: 1; }
+  #map .valid-primary { filter: brightness(1.2) drop-shadow(0 0 7px rgba(255,230,140,.95)); }
+  #map .valid-secondary { filter: brightness(1.22) drop-shadow(0 0 9px rgba(255,90,70,.95)); }
+  #map .territory-selected { stroke: #fff4b4; stroke-width: 3.2; }
+  #region_labels, #region_labels text, #region_labels tspan {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 700;
+    letter-spacing: .5px;
+    text-anchor: middle;
+    fill: #000;
+    stroke: none;
+    filter: none;
+    opacity: 1;
+  }
+  #armies_deployed text {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 700;
+    text-anchor: middle;
+    stroke: none;
+    filter: none;
+  }
+ </style>
+ <!-- RISK_OWNER_FILL_STYLES -->
+
  <defs>
   <g id="army" transform="translate(0,-6)" >
     <circle cx="0" cy="0" r="11" fill="#bbb" stroke="#bbb" stroke-width="1" />
     <circle cx="0" cy="0" r="10" stroke-width="3" stroke-dasharray="4,4"/>
+  </g>
+  <g id="attack_arrow_shape" fill="rgba(255, 232, 160, 0.72)" stroke="rgba(8, 8, 8, 1)" stroke-width="1.6" stroke-linejoin="round">
+    <path d="M0,-5 H72 V-10 L100,0 L72,10 V5 H0 Z"/>
   </g>
   <g id="map" fill="#fff" stroke-linejoin="round">
    <path fill="#ff0" id="alaska" d="M254,242C253,241 254,242 253,240C253,238 252,238 251,237C251,237 250,237 250,235C251,234 251,234 251,233C250,232 249,231 248,230C248,229 248,230 248,228C248,227 248,226 247,226C245,225 244,227 243,225C243,223 243,224 241,224C240,224 239,224 239,223C238,222 238,221 237,221C236,221 235,221 234,220C234,219 233,218 232,218C231,218 231,218 230,219C228,219 232,220 229,221C226,222 225,222 224,221C224,221 221,222 222,221C222,219 222,219 223,218C224,218 225,218 225,217C224,217 224,216 222,217C219,217 218,217 217,218C216,219 216,220 216,221C216,221 217,221 214,222C211,224 213,222 210,224C207,227 208,227 206,228C203,228 205,228 203,230C201,231 202,232 200,232C198,232 199,235 197,233C195,231 194,232 196,231C197,230 197,230 198,230C199,230 199,230 200,229C201,227 201,227 202,226C204,226 204,228 205,226C205,223 205,223 206,222C207,221 209,220 207,219C205,219 205,219 204,220C202,220 202,221 200,221C199,220 198,220 198,220C198,219 198,217 198,217C198,217 199,216 197,216C195,215 195,217 195,215C195,214 196,214 195,213C194,212 194,212 193,212C192,213 190,214 191,212C192,210 193,210 194,209C194,208 195,206 195,205C196,204 194,204 196,203C197,202 197,202 199,202C201,202 200,202 201,203C203,203 203,204 204,203C204,203 205,202 206,201C206,201 207,200 207,200C207,199 208,198 206,199C205,199 205,199 204,200C202,200 202,201 201,200C200,198 200,197 200,197C200,197 200,197 200,196C200,194 199,191 202,190C205,189 207,190 208,190C208,191 207,191 208,192C210,192 210,192 211,191C211,190 212,190 211,189C210,189 210,189 209,188C209,187 209,187 209,185C208,184 208,184 207,183C207,182 205,180 207,179C210,179 212,178 212,178C212,178 214,175 216,176C218,176 220,176 222,174C224,173 226,174 226,174L229,175C229,175 231,178 233,177C235,176 235,179 238,179C241,180 243,180 246,181C246,181 247,181 247,182C246,183 245,213 245,213L245,213L253,214C253,214 253,214 253,216C254,217 254,218 255,220C257,222 256,228 256,228L258,231C258,231 259,232 260,232C260,232 260,235 260,236C260,238 258,237 258,237C257,238 256,240 256,241C256,242 254,242 254,242Z"/>
@@ -66,6 +107,3 @@
   <use xlink:href="#map" stroke="#000000"/>
 
   <path d="M 225,175 Q 225,140 265,140 H 800 Q 840,140 840,170 M 360,190 L 385,185 L 380,220 M 385,185 L 340,240 M 460,200 L 475,215 M 486,268 L 520,245 L 495,235 Z L 529,272 L 520,245 M 497,300 L 502,305 M 498,373 V 382 M 538,375 L 560,370 V 390 M 450,440 H 475 M 650,445 V 455 M 615,545 H 635 L 625,495 M 790,460 H 818 V 508 Z V 435 M 818,460 L 840,500 M 822,280 L 835,310 H 820" fill="none" stroke-dasharray="10, 5, 5, 5" stroke="#224433" stroke-width="2"/>
- 
-  <g id ="region_labels">
-
