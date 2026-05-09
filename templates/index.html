@@ -94,7 +94,6 @@
       color: #ffe7aa;
       text-shadow: 0 2px 0 #4b2b14;
     }
-    .subtitle { color: #cfb589; margin-top: .25rem; }
     .topbar-actions {
       display: flex;
       align-items: center;
@@ -220,6 +219,28 @@
     .risk-card .type { text-transform: uppercase; font-size: .72rem; letter-spacing: .1em; font-weight:900; }
     .risk-card .territory { font-family: Georgia, "Times New Roman", serif; font-weight:700; }
     .empty { color: #baa17a; padding: .65rem 0; }
+
+    .card-toolbar {
+      display: flex;
+      gap: .7rem;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin-top: .8rem;
+    }
+    .trade-value-notice {
+      flex: 1 1 auto;
+      min-width: 160px;
+      text-align: center;
+      border: 1px solid rgba(255, 224, 124, .45);
+      border-radius: 999px;
+      padding: .56rem .75rem;
+      background: linear-gradient(135deg, rgba(232, 196, 109, .24), rgba(95, 37, 23, .55));
+      color: #ffe8a8;
+      font-weight: 900;
+      letter-spacing: .02em;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 10px 24px rgba(0,0,0,.18);
+    }
 
     .combat-panel {
       display: none;
@@ -421,7 +442,6 @@
     <header class="topbar">
       <div>
         <h1>Risk Campaign Table</h1>
-        <p class="subtitle">Hot-seat conquest with a live SVG board, card trades, dice combat, and Napoleonic table styling.</p>
       </div>
       <div class="topbar-actions">
         <label class="map-options" title="Toggle whether territory paths inherit the owner colour, or only army markers do.">
@@ -469,9 +489,9 @@
         <section class="card panel">
           <h2>Current player cards</h2>
           <div id="cardsPanel"></div>
-          <div class="form-row">
+          <div class="card-toolbar">
             <button id="tradeBtn">Trade selected</button>
-            <button id="debugCardBtn" class="ghost">+ test card</button>
+            <div id="tradeValueNotice" class="trade-value-notice" aria-live="polite">Next trade-in: —</div>
           </div>
         </section>
 
@@ -543,10 +563,14 @@
       return data;
     }
 
-    async function refresh() {
-      state = await api('/api/state');
+    async function applyState(nextState) {
+      state = nextState.state || nextState;
       renderState();
       await refreshSvg();
+    }
+
+    async function refresh() {
+      await applyState(await api('/api/state'));
     }
 
     async function refreshSvg() {
@@ -585,7 +609,54 @@
 
     function delegatedTerritoryEvent(ev) {
       const hit = findTerritoryElement(ev.target);
-      if (hit) activateTerritory(hit.safe, ev);
+      if (!hit) return;
+      if (ev.type === 'keydown' && ev.key !== 'Enter' && ev.key !== ' ') return;
+      activateTerritory(hit.safe, ev);
+    }
+
+    function armyMarkerCenter(svg, safe) {
+      const group = svg.querySelector(`#ag_${safe}`);
+      if (!group || typeof group.getBBox !== 'function') return null;
+      try {
+        const box = group.getBBox();
+        if (!Number.isFinite(box.x) || !Number.isFinite(box.y)) return null;
+        return {x: box.x + box.width / 2, y: box.y + box.height / 2};
+      } catch (_err) {
+        return null;
+      }
+    }
+
+    function updateAttackArrow(svg) {
+      const arrow = svg?.querySelector('#attack_arrow_use');
+      if (!arrow) return;
+      const pa = state?.pending_attack;
+      if (!pa?.from || !pa?.to) {
+        arrow.setAttribute('visibility', 'hidden');
+        return;
+      }
+      const from = armyMarkerCenter(svg, pa.from);
+      const to = armyMarkerCenter(svg, pa.to);
+      if (!from || !to) {
+        arrow.setAttribute('visibility', 'hidden');
+        return;
+      }
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const length = Math.hypot(dx, dy);
+      if (!(length > 8)) {
+        arrow.setAttribute('visibility', 'hidden');
+        return;
+      }
+      const startPad = 14;
+      const endPad = 16;
+      const ux = dx / length;
+      const uy = dy / length;
+      const sx = from.x + ux * startPad;
+      const sy = from.y + uy * startPad;
+      const drawLength = Math.max(10, length - startPad - endPad);
+      const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      arrow.setAttribute('transform', `translate(${sx} ${sy}) rotate(${angle}) scale(${drawLength / 100} 1)`);
+      arrow.setAttribute('visibility', 'visible');
     }
 
     function decorateSvg() {
@@ -595,30 +666,8 @@
       const validSecondary = new Set(state.valid_clicks.secondary || []);
       const selected = state.valid_clicks.selected;
 
-      // The real board renders its paths from <defs> through <use>, so the
-      // server injects #territory_hit_layer with concrete transparent paths.
-      // We decorate both the source paths for visual styling and hit paths for
-      // interaction.
-      let runtimeStyle = svg.querySelector('#risk_client_click_styles');
-      if (!runtimeStyle) {
-        runtimeStyle = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-        runtimeStyle.id = 'risk_client_click_styles';
-        runtimeStyle.textContent = `
-          #territory_names, #territory_names * { pointer-events: none; }
-          #region_labels, #region_labels * { pointer-events: none; }
-          #continents, #continents * { pointer-events: none; }
-          #armies_deployed, #armies_deployed * { pointer-events: none; }
-          #territory_hit_layer { pointer-events: all; }
-          #territory_hit_layer .territory-hit { fill: #fff; fill-opacity: 0; stroke: none; pointer-events: all; cursor: pointer; }
-          #territory_hit_layer .valid-primary { fill-opacity: .015; stroke:#ffe68d; stroke-width:3; stroke-opacity:.95; }
-          #territory_hit_layer .valid-secondary { fill-opacity: .015; stroke:#ff6b57; stroke-width:3; stroke-opacity:.95; }
-          #territory_hit_layer .territory-selected { fill-opacity:.02; stroke:#fff4b4; stroke-width:4; stroke-opacity:1; }
-          #map .valid-primary { filter: brightness(1.2) drop-shadow(0 0 7px rgba(255,230,140,.95)) !important; }
-          #map .valid-secondary { filter: brightness(1.22) drop-shadow(0 0 9px rgba(255,90,70,.95)) !important; }
-          #map .territory-selected { stroke:#fff4b4 !important; stroke-width:3.2 !important; }
-        `;
-        svg.insertBefore(runtimeStyle, svg.firstChild);
-      }
+      // The server SVG owns static/presentation styling; the client only
+      // attaches state classes and accessibility metadata.
 
       for (const [safe, t] of Object.entries(state.territories)) {
         const sourceEl = svg.querySelector(`#map #${safe}`);
@@ -639,11 +688,9 @@
         hitEl.setAttribute('role', 'button');
         hitEl.setAttribute('tabindex', '0');
         hitEl.style.pointerEvents = 'all';
-        hitEl.addEventListener('click', ev => activateTerritory(safe, ev));
-        hitEl.addEventListener('keydown', ev => {
-          if (ev.key === 'Enter' || ev.key === ' ') activateTerritory(safe, ev);
-        });
       }
+
+      updateAttackArrow(svg);
     }
 
     function playerName(pid) {
@@ -732,6 +779,8 @@
     function renderCards() {
       const c = state.current;
       const tradeBtn = $('#tradeBtn');
+      const tradeNotice = $('#tradeValueNotice');
+      if (tradeNotice) tradeNotice.textContent = state.started ? `Next trade-in: ${state.next_trade_value} armies` : 'Next trade-in: —';
       if (tradeBtn) tradeBtn.disabled = true;
       if (!state.started || !c) { $('#cardsPanel').innerHTML = '<div class="empty">Cards appear here after conquering territories.</div>'; return; }
       const must = state.must_trade ? '<p class="empty" style="color:#ffe08b">You must trade a set before leaving Reinforce.</p>' : '';
@@ -884,9 +933,7 @@
           body.amount = Math.min(amount, maxMove);
         }
         const data = await api('/api/click', {method:'POST', body});
-        state = data.state;
-        renderState();
-        await refreshSvg();
+        await applyState(data);
       } catch (err) { toast(err.message); }
     }
 
@@ -899,9 +946,7 @@
           method:'POST',
           body:{attack_dice: attackDice, defence_dice: defenceDice, advance_armies: advanceArmies}
         });
-        state = data.state;
-        renderState();
-        await refreshSvg();
+        await applyState(data);
       } catch (err) { toast(err.message); }
     }
     window.rollAttack = rollAttack;
@@ -910,18 +955,14 @@
       try {
         selectedCards.clear();
         const data = await api('/api/phase/next', {method:'POST', body:{}});
-        state = data.state;
-        renderState();
-        await refreshSvg();
+        await applyState(data);
       } catch (err) { toast(err.message); }
     }
 
     async function stopAttack() {
       try {
         const data = await api('/api/attack/stop', {method:'POST', body:{}});
-        state = data.state;
-        renderState();
-        await refreshSvg();
+        await applyState(data);
       } catch (err) { toast(err.message); }
     }
 
@@ -930,19 +971,10 @@
         if (selectedCards.size !== 3) throw new Error('Select exactly three cards.');
         const data = await api('/api/cards/trade', {method:'POST', body:{card_ids:[...selectedCards]}});
         selectedCards.clear();
-        state = data.state;
-        renderState();
-        await refreshSvg();
+        await applyState(data);
       } catch (err) { toast(err.message); }
     }
 
-    async function debugCard() {
-      try {
-        const data = await api('/api/debug/card', {method:'POST', body:{}});
-        state = data.state;
-        renderState();
-      } catch (err) { toast(err.message); }
-    }
 
     function syncPlayerKind(row) {
       const kind = row.querySelector('.player-kind').value;
@@ -988,9 +1020,7 @@
         const mode = $('#gameMode').value;
         const data = await api('/api/new', {method:'POST', body:{players, mode}});
         selectedCards.clear();
-        state = data.state;
-        renderState();
-        await refreshSvg();
+        await applyState(data);
       } catch (err) { toast(err.message); }
     }
 
@@ -1001,10 +1031,8 @@
       aiBusy = true;
       try {
         const data = await api('/api/ai/step', {method:'POST', body:{}});
-        state = data.state;
         selectedCards.clear();
-        renderState();
-        await refreshSvg();
+        await applyState(data);
       } catch (err) {
         toast(err.message);
       } finally {
@@ -1020,6 +1048,7 @@
 
 
     $('#svgContainer').addEventListener('click', delegatedTerritoryEvent, true);
+    $('#svgContainer').addEventListener('keydown', delegatedTerritoryEvent, true);
 
     $('#ownerFillToggle').checked = ownerFills;
     $('#ownerFillToggle').addEventListener('change', async ev => {
@@ -1034,7 +1063,6 @@
     $('#stopAttackBtn').addEventListener('click', stopAttack);
     $('#aiStepBtn').addEventListener('click', aiStep);
     $('#tradeBtn').addEventListener('click', tradeSelected);
-    $('#debugCardBtn').addEventListener('click', debugCard);
     $('#newGameBtn').addEventListener('click', () => $('#menuModal').classList.remove('hidden'));
 
     renderPlayerInputs();
