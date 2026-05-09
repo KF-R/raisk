@@ -1,6 +1,6 @@
 # raisk: a Risk UI using Python,HTML,CSS,SVG,JS
 
-### v0.2.0
+### v0.2.1
 
 ## Run
 
