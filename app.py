@@ -22,7 +22,7 @@ PLAYER_COLOURS = {
     2: {"name": "Royal Blue", "path": "#1e4f8f", "army": "#2563b8", "ink": "#fff2df"},
     3: {"name": "Rifle Green", "path": "#2f6a3f", "army": "#397d4a", "ink": "#fff2df"},
     4: {"name": "Imperial Gold", "path": "#d6aa32", "army": "#f0c541", "ink": "#23180d"},
-    5: {"name": "Prussian Black", "path": "#232323", "army": "#111111", "ink": "#fff2df"},
+    5: {"name": "Prussian Black", "path": "#504058", "army": "#111111", "ink": "#fff2df"},
     6: {"name": "Rose", "path": "#c46c9c", "army": "#e58abb", "ink": "#23180d"},
 }
 
@@ -410,7 +410,7 @@ def trade_bonus_territories(pid: int, cards: list[dict]) -> list[str]:
     """Return all traded-card territories currently occupied by the player.
 
     Classic Risk grants two immediate armies on each matching territory card
-    in the traded set, not just one selected match.
+    in the traded set.
     """
     matches: list[str] = []
     seen: set[str] = set()
@@ -480,10 +480,9 @@ def finish_turn_after_move() -> None:
 def advance_initial_deploy_turn() -> None:
     """Rotate initial setup one army at a time.
 
-    Risk's opening placement is not player-by-player bulk deployment. After a
-    player places one army, the next player with setup reserves gets exactly
-    one placement opportunity. When all setup reserves are empty, normal play
-    begins with player 1's first Reinforce phase.
+    After a player places one army, the next player with setup reserves gets 
+    exactly one placement opportunity. When all setup reserves are empty, 
+    normal play begins with player 1's first Reinforce phase.
     """
     if GAME["phase"] != "initial_deploy":
         return
@@ -544,11 +543,8 @@ def valid_movers(pid: int) -> list[str]:
 
 
 def valid_move_targets(from_safe: str, pid: int) -> list[str]:
-    """Legal move-phase destinations: adjacent territories owned by the same player.
+    """Legal move-phase destinations: adjacent territories owned by the same player. """
 
-    Earlier AI improvements briefly allowed owned connected-path movement, but this
-    UI/game variant intentionally uses the stricter adjacent-only transfer rule.
-    """
     if not from_safe or owner(from_safe) != pid or strength(from_safe) <= 1:
         return []
     return [n for n in neighbours(from_safe) if owner(n) == pid]
@@ -725,6 +721,22 @@ MAP_HEAD = (STATIC_DIR / "svg_map_head.xml").read_text(encoding="utf-8")
 MAP_TAIL = (STATIC_DIR / "svg_map_tail.xml").read_text(encoding="utf-8")
 
 
+def split_svg_tail(svg_tail: str) -> tuple[str, str]:
+    """Split the static tail before the final board group close.
+
+    Runtime overlays that must be visually top-most still need to remain inside
+    the transformed board group. The static tail contains continent labels and
+    then closes that group, so insert top overlays immediately before the close.
+    """
+    marker = "\n</g>\n</svg>"
+    if marker not in svg_tail:
+        raise RuntimeError("svg_map_tail.xml no longer has the expected final group close")
+    before, _after = svg_tail.rsplit(marker, 1)
+    return before + "\n", marker.lstrip("\n")
+
+
+MAP_TAIL_BEFORE_TOP_OVERLAYS, MAP_TAIL_CLOSE = split_svg_tail(MAP_TAIL)
+
 
 def extract_map_paths(map_head: str) -> list[str]:
     """Return source path elements from the SVG map definition.
@@ -759,59 +771,89 @@ def make_hit_layer(map_head: str, safe_names: set[str]) -> str:
     )
 
 
-def drop_initial_group_close(svg_tail: str) -> str:
-    """Remove the closing tag for the army layer supplied at the top of the tail."""
-    return re.sub(r'^\s*</g>\s*', '', svg_tail, count=1)
-
-
 TERRITORY_SAFE_NAMES = set(TERRITORY_ORDER)
 TERRITORY_HIT_LAYER = make_hit_layer(MAP_HEAD, TERRITORY_SAFE_NAMES)
-MAP_TAIL_AFTER_ARMIES = drop_initial_group_close(MAP_TAIL)
+
+
+def owner_fill_styles(map_data: list[tuple], owner_fills: bool) -> str:
+    if not owner_fills:
+        return ""
+    lines = [' <style id="risk_owner_fill_styles">']
+    for safe_name, _formatted_name, _x, _y, _ax, _ay, terr_owner, _strength, _neighbours in map_data:
+        colour = PLAYER_COLOURS.get(terr_owner, PLAYER_COLOURS[0])["path"]
+        lines.append(f"  #map > path#{safe_name} {{ fill: {colour}; }}")
+    lines.append(" </style>")
+    return "\n".join(lines)
+
+
+def svg_head_for(map_data: list[tuple], owner_fills: bool) -> str:
+    return MAP_HEAD.replace("<!-- RISK_OWNER_FILL_STYLES -->", owner_fill_styles(map_data, owner_fills))
+
+
+ATTACK_OVERLAY = (
+    '  <g id="attack_overlay" pointer-events="none" aria-hidden="true">\n'
+    '    <use id="attack_arrow_use" xlink:href="#attack_arrow_shape" href="#attack_arrow_shape" visibility="hidden" opacity="0.58"/>\n'
+    '  </g>\n\n'
+)
+
+
+REGION_LABEL_ATTRS = (
+    'font-family="Helvetica,Arial,sans-serif" font-size="12" font-style="normal" '
+    'font-weight="700" letter-spacing="0.5" text-anchor="middle" fill="#000" stroke="none"'
+)
+ARMY_LABEL_ATTRS = 'font-family="Helvetica,Arial,sans-serif" font-size="12" font-weight="700" text-anchor="middle" stroke="none"'
+
+
+def label_tspans(name: str) -> str:
+    return escape(name).replace("\n", "</tspan><tspan x=\"0\" dy=\"1em\">")
+
+
+def army_scale(count: int) -> float:
+    if count <= 9:
+        return 1.0
+    if count < 40:
+        return 0.9 + count / 50
+    return 1.8
 
 
 def generate_svg(map_data: list[tuple], owner_fills: bool = True) -> str:
-    territory_styles = [
-        "  <style id=\"risk_runtime_styles\">",
-        "    #territory_names, #territory_names * { pointer-events: none; }",
-        "    #region_labels, #region_labels * { pointer-events: none; }",
-        "    #continents, #continents * { pointer-events: none; }",
-        "    #armies_deployed, #armies_deployed * { pointer-events: none; }",
-        "    #territory_hit_layer { pointer-events: all; }",
-        "    #territory_hit_layer .territory-hit { fill: #fff; fill-opacity: 0; stroke: none; pointer-events: all; cursor: pointer; }",
-    ]
-    if owner_fills:
-        for safe_name, _formatted_name, _x, _y, _ax, _ay, terr_owner, _strength, _neighbours in map_data:
-            colour = PLAYER_COLOURS.get(terr_owner, PLAYER_COLOURS[0])["path"]
-            territory_styles.append(f"    #map #{safe_name} {{ fill: {colour}; }}")
-    territory_styles.append("  </style>\n")
-
-    territory_code = ""
-    army_code = "  </g>\n\n  <g id=\"armies_deployed\">\n"
+    territory_code = f'  <g id="region_labels" {REGION_LABEL_ATTRS}>\n'
+    army_code = '  <g id="armies_deployed">\n'
 
     for safe_name, formatted_name, x, y, army_offset_x, army_offset_y, terr_owner, terr_strength, _neighbours in map_data:
-        label = escape(formatted_name).replace("\n", "</tspan><tspan x=\"0\" dy=\"1em\">")
-        territory_code += f'    <text id="label_{safe_name}" transform="translate({x},{y})"><tspan>{label}</tspan></text>\n'
+        territory_code += (
+            f'    <text id="label_{safe_name}" transform="translate({x},{y})">'
+            f'<tspan>{label_tspans(formatted_name)}</tspan></text>\n'
+        )
 
-        if terr_owner != 0:
-            if terr_strength <= 9:
-                scale = 1
-            elif terr_strength < 40:
-                scale = 0.9 + terr_strength / 50
-            else:
-                scale = 1.8
+        if terr_owner == 0:
+            continue
 
-            army = PLAYER_COLOURS.get(terr_owner, PLAYER_COLOURS[0])
-            text_fill = army["ink"]
-            army_code += (
-                f'    <g id="ag_{safe_name}" transform-origin="{x + army_offset_x} {y - 16 + army_offset_y}" transform="scale({scale:.2f})">'
-                f'<use id="army_{safe_name}" xlink:href="#army" href="#army" x="{x + army_offset_x}" y="{y - 16 + army_offset_y}" '
-                f'fill="{army["army"]}" stroke="{("black" if terr_strength >= 3 else "none")}"/>'
-                f'<text id="army_{safe_name}_count" letter-spacing="-1" fill="{text_fill}" x="{x + army_offset_x - 0.5}" y="{y - 18 + army_offset_y}">{terr_strength}</text></g>\n'
-            )
+        army = PLAYER_COLOURS.get(terr_owner, PLAYER_COLOURS[0])
+        army_x = x + army_offset_x
+        army_y = y - 16 + army_offset_y
+        count_x = army_x - 0.5
+        count_y = y - 18 + army_offset_y
+        army_code += (
+            f'    <g id="ag_{safe_name}" transform-origin="{army_x} {army_y}" transform="scale({army_scale(terr_strength):.2f})">'
+            f'<use id="army_{safe_name}" xlink:href="#army" href="#army" x="{army_x}" y="{army_y}" '
+            f'fill="{army["army"]}" stroke="{("black" if terr_strength >= 3 else "none")}"/>'
+            f'<text id="army_{safe_name}_count" {ARMY_LABEL_ATTRS} letter-spacing="-1" fill="{army["ink"]}" '
+            f'x="{count_x}" y="{count_y}">{terr_strength}</text></g>\n'
+        )
 
-    army_code += "  </g>\n\n" + TERRITORY_HIT_LAYER
+    territory_code += '  </g>\n\n'
+    army_code += '  </g>\n\n'
 
-    return MAP_HEAD + "\n".join(territory_styles) + territory_code + army_code + MAP_TAIL_AFTER_ARMIES
+    return (
+        svg_head_for(map_data, owner_fills)
+        + MAP_TAIL_BEFORE_TOP_OVERLAYS
+        + TERRITORY_HIT_LAYER
+        + ATTACK_OVERLAY
+        + territory_code
+        + army_code
+        + MAP_TAIL_CLOSE
+    )
 
 
 @app.get("/")
@@ -1765,17 +1807,6 @@ def api_ai_step():
         return jsonify({"ok": False, "error": message}), 400
     return jsonify({"ok": True, "message": message, "state": public_state()})
 
-@app.post("/api/debug/card")
-def api_debug_card():
-    # Handy during UI testing; remove or protect for production.
-    if not GAME["started"]:
-        return jsonify({"ok": False, "error": "No game."}), 400
-    p = current_player()
-    card = draw_card()
-    if not card:
-        return jsonify({"ok": False, "error": "No reinforcement cards are available."}), 400
-    p["cards"].append(card)
-    return jsonify({"ok": True, "state": public_state()})
 
 
 if __name__ == "__main__":
