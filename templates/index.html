@@ -702,7 +702,7 @@
       for (const {safe, i} of bursts) {
         const centre = renderedArmyMarkerCenter(svg, safe);
         if (!centre) continue;
-        setTimeout(() => svgExplosion(svg, centre.x, centre.y, 10, 500), i * 70);
+        setTimeout(() => svgExplosion(svg, centre.x, centre.y, 15, 500), i * 70);
       }
     }
 
