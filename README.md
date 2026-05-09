@@ -1,6 +1,6 @@
 # raisk: a Risk UI using Python,HTML,CSS,SVG,JS
 
-### v0.1.4
+### v0.2.0
 
 ## Run
 
@@ -30,6 +30,15 @@ Open: http://127.0.0.1:5000
 - AI currently handles initial deployment, reinforcement placement, card trading, attack selection, dice selection, conquest advancement, one allowed move/fortification, Global Domination priorities, and Secret Mission priorities.
 - AI scoring accounts for risk profile, attack/defence bias, cards, opportunism, choke points, continent control, mission progress, and vulnerable opponents.
 
+## v0.2.0 changes
+
+- Fixed inconsistent territory-label styling by giving generated region labels explicit SVG font, fill, stroke, anchor and opacity attributes.
+- Consolidated SVG interaction/highlight rules into `static/svg_map_head.xml` instead of injecting duplicate runtime styles from the browser on every SVG refresh.
+- Simplified SVG client decoration so click/keyboard handling is delegated from `#svgContainer` rather than rebound per territory on every map redraw.
+- Factored repeated client state-refresh code through `applyState()`.
+- Factored SVG label/army rendering helpers in `app.py` for readability and lower duplication.
+- Runtime army markers/counts now render above territory selection highlights, keeping army values readable during click-selection states.
+
 ## Features
 
 - Global Domination and Secret Missions victory modes.
@@ -43,10 +52,4 @@ Open: http://127.0.0.1:5000
 - Defeated players' cards transfer to the player who conquered their final territory.
 - Shift-click to place ten reinforcements per click instead of the usual one
 
-## SVG click-layer notes
 
-- The supplied SVG keeps territory paths inside `<defs><g id="map">` and renders them through `<use>`, so browser clicks do not reliably reach the definition paths. The server duplicates the real path geometry into a transparent `#territory_hit_layer` above the rendered map.
-- The transparent territory hit layer is precomputed once at startup.
-- Client click handling targets `data-safe` on that concrete hit layer instead of relying on events from `<use>` shadow instances.
-- The board toolbar includes a `colour territories` checkbox. When enabled, territory path fill colour follows owner colour. When disabled, only the army marker changes colour and the original map fill remains visible.
-- `/api/svg` accepts `?owner_fills=1` or `?owner_fills=0`.
