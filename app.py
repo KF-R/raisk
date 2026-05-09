@@ -181,6 +181,7 @@ def new_empty_game() -> dict:
         "selected": None,
         "pending_attack": None,
         "last_battle": None,
+        "battle_seq": 0,
         "trade_count": 0,
         "card_deck": create_card_deck(),
         "card_discard": [],
@@ -1337,7 +1338,9 @@ def resolve_pending_attack(attack_dice: int, defence_dice: int, advance_armies: 
             GAME["pending_attack"]["max_attack_dice"] = min(3, strength(src) - 1)
             GAME["pending_attack"]["max_defence_dice"] = min(2, strength(dst))
 
+    GAME["battle_seq"] = GAME.get("battle_seq", 0) + 1
     GAME["last_battle"] = {
+        "battle_id": GAME["battle_seq"],
         "from": src,
         "to": dst,
         "from_name": territory_name(src),
@@ -1709,7 +1712,9 @@ def api_attack_roll():
             GAME["pending_attack"]["max_attack_dice"] = min(3, strength(src) - 1)
             GAME["pending_attack"]["max_defence_dice"] = min(2, strength(dst))
 
+    GAME["battle_seq"] = GAME.get("battle_seq", 0) + 1
     GAME["last_battle"] = {
+        "battle_id": GAME["battle_seq"],
         "from": src,
         "to": dst,
         "from_name": territory_name(src),
