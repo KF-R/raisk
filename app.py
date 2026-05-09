@@ -14,7 +14,6 @@ from ai_personalities import AI_PERSONALITIES, CHOKE_VALUES, DEFAULT_PERSONALITY
 
 app = Flask(__name__)
 
-# Territory ownership is intentionally represented as the user requested:
 # territory_owner is a player number, territory_strength is army count.
 PLAYER_COLOURS = {
     0: {"name": "Unclaimed", "path": "#d9c8a8", "army": "none", "ink": "#2a2117"},
@@ -28,53 +27,53 @@ PLAYER_COLOURS = {
 
 # safe_name, display_name, label_x, label_y, army_offset_x, army_offset_y, territory_owner, territory_strength, neighbours
 BLANK_MAP_DATA = [
-    ("alaska", "Alaska", 223, 213, 0, 0, 0, 0, ["northwest_territory", "alberta", "kamchatka"]),
-    ("alberta", "Alberta", 287, 252, 0, 0, 0, 0, ["alaska", "northwest_territory", "ontario", "western_us"]),
-    ("central_america", "Central\nAmerica", 295, 352, 0, 0, 0, 0, ["western_us", "eastern_us", "venezuela"]),
-    ("eastern_us", "Eastern\nUS", 342, 312, 0, 0, 0, 0, ["ontario", "quebec", "western_us", "central_america"]),
-    ("greenland", "Greenland", 433, 180, 0, 40, 0, 0, ["northwest_territory", "ontario", "quebec", "iceland"]),
-    ("northwest_territory", "Northwest\nTerritory", 300, 199, 0, 0, 0, 0, ["alaska", "alberta", "ontario", "greenland"]),
-    ("ontario", "Ontario", 336, 261, 0, 0, 0, 0, ["northwest_territory", "alberta", "western_us", "eastern_us", "quebec", "greenland"]),
-    ("quebec", "Quebec", 387, 254, 0, 0, 0, 0, ["ontario", "eastern_us", "greenland"]),
-    ("western_us", "Western\nUS", 290, 290, 0, 0, 0, 0, ["alberta", "ontario", "eastern_us", "central_america"]),
+    ("alaska", "Alaska", 223, 213, 4, 0, 0, 0, ["northwest_territory", "alberta", "kamchatka"]),
+    ("alberta", "Alberta", 287, 256, -1, -1, 0, 0, ["alaska", "northwest_territory", "ontario", "western_us"]),
+    ("central_america", "Central\nAmerica", 298, 351, 7, 46, 0, 0, ["western_us", "eastern_us", "venezuela"]),
+    ("eastern_us", "Eastern\nUS", 342, 316, -4, 2, 0, 0, ["ontario", "quebec", "western_us", "central_america"]),
+    ("greenland", "Greenland", 433, 180, 0, 38, 0, 0, ["northwest_territory", "ontario", "quebec", "iceland"]),
+    ("northwest_territory", "Northwest\nTerritory", 300, 200, -15, 2, 0, 0, ["alaska", "alberta", "ontario", "greenland"]),
+    ("ontario", "Ontario", 336, 261, 1, 2, 0, 0, ["northwest_territory", "alberta", "western_us", "eastern_us", "quebec", "greenland"]),
+    ("quebec", "Quebec", 387, 255, -5, 2, 0, 0, ["ontario", "eastern_us", "greenland"]),
+    ("western_us", "Western\nUS", 285, 303, 6, -1, 0, 0, ["alberta", "ontario", "eastern_us", "central_america"]),
 
-    ("argentina", "Argen-\ntina", 367, 518, 0, 0, 0, 0, ["peru", "brazil"]),
-    ("brazil", "Brazil", 403, 447, 0, 0, 0, 0, ["venezuela", "peru", "argentina", "north_africa"]),
-    ("venezuela", "Venezuela", 355, 402, 0, 0, 0, 0, ["central_america", "peru", "brazil"]),
-    ("peru", "Peru", 353, 466, 0, 0, 0, 0, ["venezuela", "brazil", "argentina"]),
+    ("argentina", "Argen-\ntina", 367, 515, -11, 49, 0, 0, ["peru", "brazil"]),
+    ("brazil", "Brazil", 407, 463, 0, -1, 0, 0, ["venezuela", "peru", "argentina", "north_africa"]),
+    ("venezuela", "Venezuela", 355, 403, -2, 2, 0, 0, ["central_america", "peru", "brazil"]),
+    ("peru", "Peru", 367, 476, -23, 5, 0, 0, ["venezuela", "brazil", "argentina"]),
 
-    ("great_britain", "Great\nBritain", 462, 262, 0, 0, 0, 0, ["iceland", "scandinavia", "northern_europe", "western_europe"]),
-    ("iceland", "Iceland", 485, 225, 0, 0, 0, 0, ["greenland", "great_britain", "scandinavia"]),
-    ("northern_europe", "Northern\nEurope", 540, 289, 0, 0, 0, 0, ["great_britain", "scandinavia", "ukraine", "southern_europe", "western_europe"]),
-    ("scandinavia", "Scandi-\nnavia", 553, 203, 0, 0, 0, 0, ["iceland", "great_britain", "northern_europe", "ukraine"]),
-    ("southern_europe", "Southern\nEurope", 549, 331, 0, 0, 0, 0, ["western_europe", "northern_europe", "ukraine", "middle_east", "egypt", "north_africa"]),
-    ("ukraine", "Ukraine", 608, 262, 0, 0, 0, 0, ["scandinavia", "northern_europe", "southern_europe", "middle_east", "afghanistan", "ural"]),
-    ("western_europe", "Western\nEurope", 480, 350, 0, 0, 0, 0, ["great_britain", "northern_europe", "southern_europe", "north_africa"]),
+    ("great_britain", "Great\nBritain", 462, 262, 23, 47, 0, 0, ["iceland", "scandinavia", "northern_europe", "western_europe"]),
+    ("iceland", "Iceland", 485, 225, 6, 2, 0, 0, ["greenland", "great_britain", "scandinavia"]),
+    ("northern_europe", "Northern\nEurope", 538, 293, 12, 2, 0, 0, ["great_britain", "scandinavia", "ukraine", "southern_europe", "western_europe"]),
+    ("scandinavia", "Scandi-\nnavia", 553, 203, -15, 48, 0, 0, ["iceland", "great_britain", "northern_europe", "ukraine"]),
+    ("southern_europe", "Southern\nEurope", 549, 340, 6, 2, 0, 0, ["western_europe", "northern_europe", "ukraine", "middle_east", "egypt", "north_africa"]),
+    ("ukraine", "Ukraine", 615, 260, -12, 45, 0, 0, ["scandinavia", "northern_europe", "southern_europe", "middle_east", "afghanistan", "ural"]),
+    ("western_europe", "Western\nEurope", 480, 350, 22, -3, 0, 0, ["great_britain", "northern_europe", "southern_europe", "north_africa"]),
 
-    ("congo", "Congo", 571, 498, 0, 0, 0, 0, ["north_africa", "east_africa", "south_africa"]),
-    ("east_africa", "East\nAfrica", 603, 451, 0, 0, 0, 0, ["egypt", "north_africa", "congo", "south_africa", "madagascar", "middle_east"]),
-    ("egypt", "Egypt", 574, 410, 0, 0, 0, 0, ["southern_europe", "north_africa", "east_africa", "middle_east"]),
-    ("madagascar", "Mada-\ngascar", 638, 559, 0, 0, 0, 0, ["east_africa", "south_africa"]),
-    ("north_africa", "North\nAfrica", 515, 430, 0, 0, 0, 0, ["brazil", "western_europe", "southern_europe", "egypt", "east_africa", "congo"]),
-    ("south_africa", "South\nAfrica", 580, 550, 0, 0, 0, 0, ["congo", "east_africa", "madagascar"]),
+    ("congo", "Congo", 571, 501, 2, 0, 0, 0, ["north_africa", "east_africa", "south_africa"]),
+    ("east_africa", "East\nAfrica", 606, 459, -6, -1, 0, 0, ["egypt", "north_africa", "congo", "south_africa", "madagascar", "middle_east"]),
+    ("egypt", "Egypt", 578, 417, -4, 0, 0, 0, ["southern_europe", "north_africa", "east_africa", "middle_east"]),
+    ("madagascar", "Mada-\ngascar", 638, 559, 9, 0, 0, 0, ["east_africa", "south_africa"]),
+    ("north_africa", "North\nAfrica", 515, 432, -2, -3, 0, 0, ["brazil", "western_europe", "southern_europe", "egypt", "east_africa", "congo"]),
+    ("south_africa", "South\nAfrica", 580, 562, 0, 0, 0, 0, ["congo", "east_africa", "madagascar"]),
 
-    ("afghanistan", "Afgha-\nnistan", 674, 307, 0, 0, 0, 0, ["ukraine", "ural", "china", "india", "middle_east"]),
-    ("china", "China", 757, 347, 0, 0, 0, 0, ["afghanistan", "ural", "siberia", "mongolia", "siam", "india"]),
-    ("india", "India", 712, 382, 0, 0, 0, 0, ["middle_east", "afghanistan", "china", "siam"]),
-    ("irkutsk", "Irkutsk", 758, 260, 0, 0, 0, 0, ["siberia", "yakutsk", "kamchatka", "mongolia"]),
+    ("afghanistan", "Afgha-\nnistan", 674, 315, 0, 0, 0, 0, ["ukraine", "ural", "china", "india", "middle_east"]),
+    ("china", "China", 757, 357, 0, 0, 0, 0, ["afghanistan", "ural", "siberia", "mongolia", "siam", "india"]),
+    ("india", "India", 715, 394, 0, 0, 0, 0, ["middle_east", "afghanistan", "china", "siam"]),
+    ("irkutsk", "Irkutsk", 758, 260, 11, 0, 0, 0, ["siberia", "yakutsk", "kamchatka", "mongolia"]),
     ("japan", "Japan", 853, 293, 0, 0, 0, 0, ["kamchatka", "mongolia"]),
-    ("kamchatka", "Kamchatka", 820, 215, 0, 0, 0, 0, ["alaska", "yakutsk", "irkutsk", "mongolia", "japan"]),
-    ("middle_east", "Middle\nEast", 627, 370, 0, 0, 0, 0, ["southern_europe", "ukraine", "afghanistan", "india", "east_africa", "egypt"]),
-    ("mongolia", "Mongolia", 777, 296, 0, 0, 0, 0, ["siberia", "irkutsk", "kamchatka", "japan", "china"]),
-    ("siam", "Siam", 766, 400, 0, 0, 0, 0, ["india", "china", "indonesia"]),
-    ("siberia", "Siberia", 723, 215, 0, 0, 0, 0, ["ural", "china", "mongolia", "irkutsk", "yakutsk"]),
-    ("ural", "Ural", 683, 240, 0, 0, 0, 0, ["ukraine", "afghanistan", "china", "siberia"]),
+    ("kamchatka", "Kamchatka", 843, 205, -5, 0, 0, 0, ["alaska", "yakutsk", "irkutsk", "mongolia", "japan"]),
+    ("middle_east", "Middle\nEast", 627, 379, 0, 0, 0, 0, ["southern_europe", "ukraine", "afghanistan", "india", "east_africa", "egypt"]),
+    ("mongolia", "Mongolia", 777, 303, 15, 0, 0, 0, ["siberia", "irkutsk", "kamchatka", "japan", "china"]),
+    ("siam", "Siam", 771, 409, -2, 0, 0, 0, ["india", "china", "indonesia"]),
+    ("siberia", "Siberia", 723, 215, -4, -3, 0, 0, ["ural", "china", "mongolia", "irkutsk", "yakutsk"]),
+    ("ural", "Ural", 683, 250, -2, -2, 0, 0, ["ukraine", "afghanistan", "china", "siberia"]),
     ("yakutsk", "Yakutsk", 779, 194, 0, 0, 0, 0, ["siberia", "irkutsk", "kamchatka"]),
 
-    ("eastern_australia", "Eastern\nAustralia", 854, 535, 0, 0, 0, 0, ["new_guinea", "western_australia"]),
-    ("new_guinea", "New\nGuinea", 839, 464, 0, 0, 0, 0, ["indonesia", "western_australia", "eastern_australia"]),
-    ("indonesia", "Indonesia", 755, 489, 0, 0, 0, 0, ["siam", "new_guinea", "western_australia"]),
-    ("western_australia", "Western\nAustralia", 810, 558, 0, 0, 0, 0, ["indonesia", "new_guinea", "eastern_australia"]),
+    ("eastern_australia", "Eastern\nAustralia", 855, 535, 16, 51, 0, 0, ["new_guinea", "western_australia"]),
+    ("new_guinea", "New\nGuinea", 848, 468, 0, 0, 0, 0, ["indonesia", "western_australia", "eastern_australia"]),
+    ("indonesia", "Indonesia", 754, 492, 0, 0, 0, 0, ["siam", "new_guinea", "western_australia"]),
+    ("western_australia", "Western\nAustralia", 810, 559, 0, 0, 0, 0, ["indonesia", "new_guinea", "eastern_australia"]),
 ]
 
 TERRITORY_ORDER = [row[0] for row in BLANK_MAP_DATA]
@@ -776,6 +775,7 @@ TERRITORY_HIT_LAYER = make_hit_layer(MAP_HEAD, TERRITORY_SAFE_NAMES)
 
 
 def owner_fill_styles(map_data: list[tuple], owner_fills: bool) -> str:
+#    return "" # Debug line used for testing only    
     if not owner_fills:
         return ""
     lines = [' <style id="risk_owner_fill_styles">']
@@ -826,7 +826,7 @@ def generate_svg(map_data: list[tuple], owner_fills: bool = True) -> str:
             f'<tspan>{label_tspans(formatted_name)}</tspan></text>\n'
         )
 
-        if terr_owner == 0:
+        if terr_owner == 0: # Comment this loop escape during debugging to see army markers on empty maps
             continue
 
         army = PLAYER_COLOURS.get(terr_owner, PLAYER_COLOURS[0])
