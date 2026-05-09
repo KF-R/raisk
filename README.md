@@ -1,6 +1,4 @@
-# raisk: a Risk UI using Python,HTML,CSS,SVG,JS
-
-### v0.2.1
+# raisk v0.2.2: Risk with AI (Python/Flask/HTML/JS)
 
 ## Run
 
@@ -13,8 +11,9 @@ python app.py
 
 Open: http://127.0.0.1:5000
 
-
 ## AI players
+
+<img align="right" width="430" height="270" alt="raisk-redwin" src="https://github.com/user-attachments/assets/e292776e-e2ad-49d9-8166-98b847851003" />
 
 - Each player can be set to `Human` or `AI` in the new-game menu.
 - Each AI player can be assigned one of six personalities.
@@ -29,15 +28,6 @@ Open: http://127.0.0.1:5000
 - Browser UI automatically advances AI turns while leaving human turns interactive.
 - AI currently handles initial deployment, reinforcement placement, card trading, attack selection, dice selection, conquest advancement, one allowed move/fortification, Global Domination priorities, and Secret Mission priorities.
 - AI scoring accounts for risk profile, attack/defence bias, cards, opportunism, choke points, continent control, mission progress, and vulnerable opponents.
-
-## v0.2.0 changes
-
-- Fixed inconsistent territory-label styling by giving generated region labels explicit SVG font, fill, stroke, anchor and opacity attributes.
-- Consolidated SVG interaction/highlight rules into `static/svg_map_head.xml` instead of injecting duplicate runtime styles from the browser on every SVG refresh.
-- Simplified SVG client decoration so click/keyboard handling is delegated from `#svgContainer` rather than rebound per territory on every map redraw.
-- Factored repeated client state-refresh code through `applyState()`.
-- Factored SVG label/army rendering helpers in `app.py` for readability and lower duplication.
-- Runtime army markers/counts now render above territory selection highlights, keeping army values readable during click-selection states.
 
 ## Features
 
