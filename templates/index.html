@@ -156,12 +156,12 @@
 
     .map-hint {
       position: absolute;
-      left: 18px;
-      bottom: 18px;
+      left: 6px;
+      bottom: 6px;
       max-width: min(560px, calc(100% - 36px));
       border: 1px solid rgba(255, 235, 170, .25);
       border-radius: 16px;
-      background: rgba(15, 11, 8, .72);
+      background: rgba(15, 11, 8, .6);
       color: #f7deb2;
       padding: .7rem .85rem;
       backdrop-filter: blur(8px);
@@ -444,6 +444,7 @@
         <h1>Risk Campaign Table</h1>
       </div>
       <div class="topbar-actions">
+        <button id="newGameBtn" class="ghost">New game</button>
         <label class="map-options" title="Toggle whether territory paths inherit the owner colour, or only army markers do.">
           <input type="checkbox" id="ownerFillToggle" checked>
           colour territories
@@ -470,7 +471,6 @@
             <button id="stopAttackBtn" class="ghost danger" style="display:none">Stop attack</button>
             <button id="aiStepBtn" class="ghost" style="display:none">AI step</button>
             <button id="nextPhaseBtn" class="success">Next phase</button>
-            <button id="newGameBtn" class="ghost">New game</button>
           </div>
         </div>
       </div>
@@ -735,16 +735,22 @@
       if (!state.started) return 'Start a game to deal territories and begin deployment.';
       if (state.winner) return `${state.winner.name} controls the board.`;
       const c = state.current;
-      if (state.phase === 'initial_deploy') return `${c.name}: place one army on one owned territory. ${c.reserve} setup armies remaining for this player.`;
-      if (state.phase === 'reinforce') return `${c.name}: deploy ${c.reserve} reserve armies. Trade cards first if required. Shift-click places up to 10 armies.`;
+      if (state.phase === 'initial_deploy') return `${c.name}: place an army (${c.reserve} remaining).`;
+      if (state.phase === 'reinforce') {
+        if (c.reserve === 0) {
+            return `Reserves deployred. Click Next Phase to continue.`;            
+        } else {
+            return `${c.name}: deploy ${c.reserve} reserve armies. Shift-click to place ${Math.min(10, c.reserve)}.`;
+        }
+      }
       if (state.phase === 'attack') {
-        if (state.pending_attack) return 'Choose attacker and defender dice, set the conquest advance amount, then roll.';
+        if (state.pending_attack) return 'Choose attacker and defender dice, set the advance amount, then roll.';
         if (state.selected) return `Attack from ${state.territories[state.selected].name}: choose a highlighted enemy territory.`;
-        return `${c.name}: choose a highlighted territory with enough armies to attack.`;
+        return `${c.name}: choose a highlighted territory to attack from.`;
       }
       if (state.phase === 'move') {
         if (state.selected) return `Move from ${state.territories[state.selected].name}: choose a highlighted friendly neighbour.`;
-        return `${c.name}: optionally make one adjacent friendly move, or use Next phase to decline.`;
+        return `${c.name}: make one adjacent friendly move (use Next phase to decline).`;
       }
       return 'Ready.';
     }
