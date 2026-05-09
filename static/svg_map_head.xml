@@ -11,11 +11,11 @@
   #armies_deployed, #armies_deployed * { pointer-events: none; }
   #territory_hit_layer { pointer-events: all; }
   #territory_hit_layer .territory-hit { fill: #fff; fill-opacity: 0; stroke: none; pointer-events: all; cursor: pointer; }
-  #territory_hit_layer .valid-primary { fill-opacity: .015; stroke: #ffe68d; stroke-width: 3; stroke-opacity: .95; }
-  #territory_hit_layer .valid-secondary { fill-opacity: .015; stroke: #ff6b57; stroke-width: 3; stroke-opacity: .95; }
+  #territory_hit_layer .valid-primary { fill-opacity: .015; stroke: #ffe68d; stroke-width: 3; stroke-opacity: .8; }
+  #territory_hit_layer .valid-secondary { fill-opacity: .015; stroke: #ff6b57; stroke-width: 3; stroke-opacity: .8; }
   #territory_hit_layer .territory-selected { fill-opacity: .02; stroke: #fff4b4; stroke-width: 4; stroke-opacity: 1; }
-  #map .valid-primary { filter: brightness(1.2) drop-shadow(0 0 7px rgba(255,230,140,.95)); }
-  #map .valid-secondary { filter: brightness(1.22) drop-shadow(0 0 9px rgba(255,90,70,.95)); }
+  #map .valid-primary { filter: brightness(1.2) drop-shadow(0 0 6px rgba(255,230,140,.7)); }
+  #map .valid-secondary { filter: brightness(1.22) drop-shadow(0 0 8px rgba(255,90,70,.7)); }
   #map .territory-selected { stroke: #fff4b4; stroke-width: 3.2; }
   #region_labels, #region_labels text, #region_labels tspan {
     font-family: Helvetica, Arial, sans-serif;
