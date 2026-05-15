@@ -435,6 +435,19 @@
       font-size:.68rem;
     }
     .mission-slip.complete { border-color: rgba(255, 225, 120, .55); color:#ffe5a3; }
+
+    .reserve-counter {
+      display: inline-block;
+      position: relative;
+      overflow: hidden;
+      vertical-align: baseline;
+      min-width: 1ch;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .reserve-counter.rolling { will-change: transform; }
+    .scroll-counter-track { display: block; will-change: transform; }
+    .scroll-counter-row { display: block; height: 1em; line-height: 1em; }
   </style>
 </head>
 <body>
@@ -535,7 +548,17 @@
     let aiTimer = null;
     let aiBusy = false;
     let lastAnimatedBattleKey = null;
+    let counterAnimationSeq = 0;
     const selectedCards = new Set();
+    const SCROLL_COUNTER_CONFIG = {
+      stepDurationMs: 240,
+      minDurationMs: 300,
+      maxDurationMs: 1800,
+      svgRowHeight: 15,
+      svgPadX: 5,
+      svgPadY: 2,
+      htmlRowHeightEm: 1.15
+    };
     const $ = sel => document.querySelector(sel);
     const AI_PERSONALITY_NAMES = {{ ai_personalities|tojson }};
     const DEFAULT_AI_PERSONALITIES = {{ default_ai_personalities|tojson }};
@@ -565,19 +588,21 @@
     }
 
     async function applyState(nextState) {
+      const previousState = state;
       state = nextState.state || nextState;
-      renderState();
-      await refreshSvg();
+      renderState(previousState);
+      await refreshSvg(previousState);
     }
 
     async function refresh() {
       await applyState(await api('/api/state'));
     }
 
-    async function refreshSvg() {
+    async function refreshSvg(previousState = null) {
       const svgText = await fetch(`/api/svg?owner_fills=${ownerFills ? '1' : '0'}`).then(r => r.text());
       $('#svgContainer').innerHTML = svgText;
       decorateSvg();
+      animateArmyCounterIncreases(previousState, state);
       playArmyLossExplosions();
     }
 
@@ -594,6 +619,182 @@
 
     function easeOutQuad(t) {
       return 1 - (1 - t) * (1 - t);
+    }
+
+    function clampNumber(n, lo, hi) {
+      return Math.max(lo, Math.min(hi, n));
+    }
+
+    function counterValues(oldValue, newValue) {
+      const oldNum = Math.floor(Number(oldValue));
+      const newNum = Math.floor(Number(newValue));
+      if (!Number.isFinite(oldNum) || !Number.isFinite(newNum) || newNum <= oldNum) return [newNum];
+      return Array.from({length: newNum - oldNum + 1}, (_, i) => oldNum + i);
+    }
+
+    function counterDuration(values) {
+      const steps = Math.max(1, values.length - 1);
+      return clampNumber(
+        steps * SCROLL_COUNTER_CONFIG.stepDurationMs,
+        SCROLL_COUNTER_CONFIG.minDurationMs,
+        SCROLL_COUNTER_CONFIG.maxDurationMs
+      );
+    }
+
+    function ensureSvgDefs(svg) {
+      let defs = svg?.querySelector('defs');
+      if (!defs && svg) {
+        defs = svgEl('defs');
+        svg.insertBefore(defs, svg.firstChild);
+      }
+      return defs;
+    }
+
+    function animateSvgCounter(textEl, oldValue, newValue) {
+      const values = counterValues(oldValue, newValue);
+      if (!textEl || values.length < 2) {
+        if (textEl) textEl.textContent = String(newValue);
+        return;
+      }
+
+      const svg = textEl.ownerSVGElement;
+      const parent = textEl.parentNode;
+      if (!svg || !parent) {
+        textEl.textContent = String(newValue);
+        return;
+      }
+
+      const finalText = String(newValue);
+      textEl.textContent = finalText;
+      let box;
+      try {
+        box = textEl.getBBox();
+      } catch (_err) {
+        textEl.textContent = finalText;
+        return;
+      }
+
+      const xAttr = Number(textEl.getAttribute('x'));
+      const yAttr = Number(textEl.getAttribute('y'));
+      const x = Number.isFinite(xAttr) ? xAttr : box.x + box.width / 2;
+      const y = Number.isFinite(yAttr) ? yAttr : box.y + box.height;
+      const padX = SCROLL_COUNTER_CONFIG.svgPadX;
+      const padY = SCROLL_COUNTER_CONFIG.svgPadY;
+      const rowHeight = Math.max(SCROLL_COUNTER_CONFIG.svgRowHeight, box.height * 1.22);
+      const maxChars = Math.max(...values.map(v => String(v).length));
+      const clipWidth = Math.max(box.width + padX * 2, maxChars * 8 + padX * 2);
+      const clipX = box.x - Math.max(padX, (clipWidth - box.width) / 2);
+      const clipY = box.y - Math.max(padY, (rowHeight - box.height) / 2);
+      const clipId = `scroll_counter_clip_${++counterAnimationSeq}`;
+      const defs = ensureSvgDefs(svg);
+
+      const clip = svgEl('clipPath', {id: clipId, clipPathUnits: 'userSpaceOnUse'});
+      clip.appendChild(svgEl('rect', {
+        x: clipX,
+        y: clipY,
+        width: clipWidth,
+        height: rowHeight + padY * 2
+      }));
+      defs.appendChild(clip);
+
+      const viewport = svgEl('g', {
+        'clip-path': `url(#${clipId})`,
+        'pointer-events': 'none',
+        'aria-hidden': 'true'
+      });
+      const track = svgEl('g');
+      values.forEach((value, i) => {
+        const t = textEl.cloneNode(false);
+        t.removeAttribute('id');
+        t.setAttribute('x', x);
+        t.setAttribute('y', y + i * rowHeight);
+        t.textContent = String(value);
+        track.appendChild(t);
+      });
+      viewport.appendChild(track);
+
+      const hadOpacity = textEl.hasAttribute('opacity');
+      const oldOpacity = textEl.getAttribute('opacity');
+      textEl.setAttribute('opacity', '0');
+      parent.insertBefore(viewport, textEl.nextSibling);
+
+      const duration = counterDuration(values);
+      const start = performance.now();
+      const maxOffset = rowHeight * (values.length - 1);
+
+      function finish() {
+        track.setAttribute('transform', `translate(0 ${-maxOffset})`);
+        textEl.textContent = finalText;
+        if (hadOpacity) textEl.setAttribute('opacity', oldOpacity);
+        else textEl.removeAttribute('opacity');
+        viewport.remove();
+        clip.remove();
+      }
+
+      function frame(now) {
+        const t = Math.min(1, (now - start) / duration);
+        const eased = easeOutCubic(t);
+        track.setAttribute('transform', `translate(0 ${-(maxOffset * eased)})`);
+        if (t < 1) requestAnimationFrame(frame);
+        else finish();
+      }
+      requestAnimationFrame(frame);
+    }
+
+    function animateHtmlCounter(el, oldValue, newValue) {
+      const values = counterValues(oldValue, newValue);
+      if (!el || values.length < 2) {
+        if (el) el.textContent = String(newValue);
+        return;
+      }
+
+      const maxChars = Math.max(...values.map(v => String(v).length));
+      el.classList.add('rolling');
+      el.style.height = `${SCROLL_COUNTER_CONFIG.htmlRowHeightEm}em`;
+      el.style.minWidth = `${maxChars}ch`;
+      el.innerHTML = `<span class="scroll-counter-track">${values.map(v => `<span class="scroll-counter-row">${v}</span>`).join('')}</span>`;
+      const track = el.querySelector('.scroll-counter-track');
+      const row = el.querySelector('.scroll-counter-row');
+      const rowHeight = row?.getBoundingClientRect?.().height || (parseFloat(getComputedStyle(el).fontSize) * SCROLL_COUNTER_CONFIG.htmlRowHeightEm);
+      const duration = counterDuration(values);
+      const start = performance.now();
+      const maxOffset = rowHeight * (values.length - 1);
+
+      function finish() {
+        el.classList.remove('rolling');
+        el.style.height = '';
+        el.textContent = String(newValue);
+      }
+
+      function frame(now) {
+        const t = Math.min(1, (now - start) / duration);
+        const eased = easeOutCubic(t);
+        track.style.transform = `translateY(${-maxOffset * eased}px)`;
+        if (t < 1) requestAnimationFrame(frame);
+        else finish();
+      }
+      requestAnimationFrame(frame);
+    }
+
+    function animateArmyCounterIncreases(previousState, currentState) {
+      const svg = $('#svgContainer svg');
+      if (!svg || !previousState?.territories || !currentState?.territories) return;
+      for (const [safe, currentTerritory] of Object.entries(currentState.territories)) {
+        const previousTerritory = previousState.territories[safe];
+        if (!previousTerritory) continue;
+        const sameOwner = currentTerritory.owner === previousTerritory.owner && currentTerritory.owner !== 0;
+        if (!sameOwner || currentTerritory.strength <= previousTerritory.strength) continue;
+        const textEl = svg.querySelector(`#army_${safe}_count`);
+        animateSvgCounter(textEl, previousTerritory.strength, currentTerritory.strength);
+      }
+    }
+
+    function animateReserveCounterIncreases(container) {
+      container.querySelectorAll('.reserve-counter[data-old][data-new]').forEach(el => {
+        const oldValue = Number(el.dataset.old);
+        const newValue = Number(el.dataset.new);
+        animateHtmlCounter(el, oldValue, newValue);
+      });
     }
 
     function ensureExplosionDefs(svg) {
@@ -860,7 +1061,7 @@
       })[phase] || phase;
     }
 
-    function renderState() {
+    function renderState(previousState = null) {
       const current = state.current;
       $('#menuModal').classList.toggle('hidden', state.started);
       $('#turnBadge').innerHTML = `<span class="phase-pill">${phaseLabel(state.phase)}</span><span>${current ? `Turn ${state.turn || 'setup'} · ${current.name}` : 'Start a campaign'}</span>`;
@@ -871,7 +1072,7 @@
       $('#stopAttackBtn').style.display = state.phase === 'attack' && !aiTurn ? 'inline-block' : 'none';
       $('#aiStepBtn').style.display = aiTurn ? 'inline-block' : 'none';
 
-      renderPlayerTable();
+      renderPlayerTable(previousState);
       renderCards();
       renderVictory();
       renderCombat();
@@ -889,7 +1090,7 @@
       if (state.phase === 'initial_deploy') return `${c.name}: place an army (${c.reserve} remaining).`;
       if (state.phase === 'reinforce') {
         if (c.reserve === 0) {
-            return `Reserves deployred. Click Next Phase to continue.`;            
+            return `Reserves deployed. Click Next Phase to continue.`;            
         } else {
             return `${c.name}: deploy ${c.reserve} reserve armies. Shift-click to place ${Math.min(10, c.reserve)}.`;
         }
@@ -915,22 +1116,32 @@
       return '';
     }
 
-    function renderPlayerTable() {
-      if (!state.started) { $('#playerTable').innerHTML = '<div class="empty">No commanders yet.</div>'; return; }
-      const rows = state.players.map(p => `
+    function renderPlayerTable(previousState = null) {
+      const table = $('#playerTable');
+      if (!state.started) { table.innerHTML = '<div class="empty">No commanders yet.</div>'; return; }
+      const previousPlayers = new Map((previousState?.players || []).map(p => [p.id, p]));
+      const rows = state.players.map(p => {
+        const prev = previousPlayers.get(p.id);
+        const reserveIncreased = prev && p.reserve > prev.reserve;
+        const reserveHtml = reserveIncreased
+          ? `<span class="reserve-counter" data-old="${prev.reserve}" data-new="${p.reserve}">${prev.reserve}</span>`
+          : `<span class="reserve-counter">${p.reserve}</span>`;
+        return `
         <tr class="${p.id === state.current_player ? 'current' : ''}">
           <td><span class="player-name"><span class="swatch" style="background:${p.colour.path}"></span>${p.name}${p.eliminated ? ' †' : ''}</span>${p.kind === 'ai' ? `<span class="ai-note">AI · ${p.ai_personality}</span>` : ''}</td>
           <td>${p.territory_count}</td>
           <td>${p.card_count}</td>
-          <td>${p.reserve}</td>
+          <td>${reserveHtml}</td>
           <td>${p.army_count}</td>
           <td>${p.continent_bonus}</td>
-        </tr>`).join('');
-      $('#playerTable').innerHTML = `
+        </tr>`;
+      }).join('');
+      table.innerHTML = `
         <table>
           <thead><tr><th>Player</th><th>Terr.</th><th>Cards</th><th>Reserve</th><th>Armies</th><th>Bonus</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
+      animateReserveCounterIncreases(table);
     }
 
     function renderCards() {
