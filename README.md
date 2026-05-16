@@ -1,4 +1,4 @@
-# raisk v0.2.4: Risk with AI (Python/Flask/HTML/JS)
+# raisk v0.3.0: Risk with AI (Python/Flask/HTML/JS)
 
 ## Run
 
@@ -41,3 +41,4 @@ Open: http://127.0.0.1:5000
 - Attack UI permits selectable attack dice, defender dice, and conquest advance size.
 - Defeated players' cards transfer to the player who conquered their final territory.
 - Shift-click to place ten reinforcements per click instead of the usual one
+- The move selector includes a Split shortcut that sets the slider to evenly divide source/destination armies, rounded in favour of the source.
