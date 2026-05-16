@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Risk Campaign Table</title>
+  <title>Risk Campaign Table v0.3.0</title>
   <style>
     :root {
       --bg: #140f0b;
@@ -252,6 +252,36 @@
     }
     .combat-panel.show { display: block; }
     .combat-head { display:flex; justify-content:space-between; gap:1rem; align-items:start; margin-bottom: .75rem; }
+
+
+    .move-panel.hidden { display:none; }
+    .move-prompt {
+      padding: .9rem;
+      border: 1px solid rgba(255, 224, 140, .28);
+      border-radius: 18px;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.07), transparent 30%),
+        linear-gradient(135deg, rgba(57, 37, 23, .96), rgba(22, 15, 10, .96));
+      box-shadow: 0 14px 36px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.08);
+    }
+    .move-prompt.hidden { display:none; }
+    .move-prompt-title {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:.75rem;
+      color:#ffe1a0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size:1.05rem;
+      font-weight:700;
+      margin-bottom:.4rem;
+    }
+    .move-prompt-route { color:#d8c09b; line-height:1.35; font-size:.9rem; margin-bottom:.75rem; }
+    .move-prompt-controls { display:grid; gap:.65rem; }
+    .move-amount-row { display:flex; gap:.65rem; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .move-amount-row input[type="number"] { width: 5.5rem; text-align:center; font-weight:900; }
+    .move-amount-row input[type="range"] { flex: 1 1 160px; accent-color:#d8b25c; min-width: 130px; }
+    .move-prompt-actions { display:flex; gap:.55rem; justify-content:flex-end; flex-wrap:wrap; }
     .dice-row { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; margin: .5rem 0; }
     .die {
       width: 36px; height: 36px;
@@ -494,6 +524,11 @@
           <div id="victoryContent"></div>
         </section>
 
+        <section class="card panel move-panel hidden" id="movePromptPanel">
+          <h2>Reinforcement move</h2>
+          <div id="movePrompt" class="move-prompt hidden" aria-live="polite"></div>
+        </section>
+
         <section class="card panel">
           <h2>Commanders</h2>
           <div id="playerTable"></div>
@@ -548,6 +583,7 @@
     let aiTimer = null;
     let aiBusy = false;
     let lastAnimatedBattleKey = null;
+    let pendingMove = null;
     let counterAnimationSeq = 0;
     const selectedCards = new Set();
     const SCROLL_COUNTER_CONFIG = {
@@ -978,16 +1014,13 @@
       }
     }
 
-    function updateAttackArrow(svg) {
-      const arrow = svg?.querySelector('#attack_arrow_use');
-      if (!arrow) return;
-      const pa = state?.pending_attack;
-      if (!pa?.from || !pa?.to) {
-        arrow.setAttribute('visibility', 'hidden');
+    function updateDirectedArrow(svg, arrow, fromSafe, toSafe, opts = {}) {
+      if (!arrow || !fromSafe || !toSafe) {
+        arrow?.setAttribute('visibility', 'hidden');
         return;
       }
-      const from = armyMarkerCenter(svg, pa.from);
-      const to = armyMarkerCenter(svg, pa.to);
+      const from = armyMarkerCenter(svg, fromSafe);
+      const to = armyMarkerCenter(svg, toSafe);
       if (!from || !to) {
         arrow.setAttribute('visibility', 'hidden');
         return;
@@ -999,8 +1032,8 @@
         arrow.setAttribute('visibility', 'hidden');
         return;
       }
-      const startPad = 14;
-      const endPad = 16;
+      const startPad = opts.startPad ?? 14;
+      const endPad = opts.endPad ?? 16;
       const ux = dx / length;
       const uy = dy / length;
       const sx = from.x + ux * startPad;
@@ -1008,7 +1041,29 @@
       const drawLength = Math.max(10, length - startPad - endPad);
       const angle = Math.atan2(dy, dx) * 180 / Math.PI;
       arrow.setAttribute('transform', `translate(${sx} ${sy}) rotate(${angle}) scale(${drawLength / 100} 1)`);
+      if (opts.fill) arrow.setAttribute('fill', opts.fill);
+      if (opts.opacity) arrow.setAttribute('opacity', opts.opacity);
       arrow.setAttribute('visibility', 'visible');
+    }
+
+    function updateAttackArrow(svg) {
+      const arrow = svg?.querySelector('#attack_arrow_use');
+      const pa = state?.pending_attack;
+      updateDirectedArrow(svg, arrow, pa?.from, pa?.to);
+    }
+
+    function updateReinforcementArrow(svg) {
+      const arrow = svg?.querySelector('#reinforcement_arrow_use');
+      const move = pendingMove;
+      if (!move || state?.phase !== 'move' || state?.selected !== move.from) {
+        arrow?.setAttribute('visibility', 'hidden');
+        return;
+      }
+      updateDirectedArrow(svg, arrow, move.from, move.to, {
+        opacity: '1',
+        startPad: 15,
+        endPad: 17
+      });
     }
 
     function decorateSvg() {
@@ -1017,6 +1072,7 @@
       const validPrimary = new Set(state.valid_clicks.primary || []);
       const validSecondary = new Set(state.valid_clicks.secondary || []);
       const selected = state.valid_clicks.selected;
+      const moveTarget = state.phase === 'move' ? pendingMove?.to : null;
 
       // The server SVG owns static/presentation styling; the client only
       // attaches state classes and accessibility metadata.
@@ -1033,7 +1089,7 @@
           el.dataset.strength = t.strength;
           if (validPrimary.has(safe)) el.classList.add('valid-primary');
           if (validSecondary.has(safe)) el.classList.add('valid-secondary');
-          if (selected === safe) el.classList.add('territory-selected');
+          if (selected === safe || moveTarget === safe) el.classList.add('territory-selected');
           el.setAttribute('aria-label', `${t.name}: ${playerName(t.owner)} — ${t.strength} armies`);
         }
 
@@ -1043,6 +1099,7 @@
       }
 
       updateAttackArrow(svg);
+      updateReinforcementArrow(svg);
     }
 
     function playerName(pid) {
@@ -1073,6 +1130,7 @@
       $('#aiStepBtn').style.display = aiTurn ? 'inline-block' : 'none';
 
       renderPlayerTable(previousState);
+      renderMovePrompt();
       renderCards();
       renderVictory();
       renderCombat();
@@ -1281,6 +1339,140 @@
       $('#logList').innerHTML = (state.log || []).map(item => `<div class="log-item">${item}</div>`).join('') || '<div class="empty">No record yet.</div>';
     }
 
+
+
+    function movePromptEl() {
+      return $('#movePrompt');
+    }
+
+    function movePromptPanelEl() {
+      return $('#movePromptPanel');
+    }
+
+    function hideMovePromptElements() {
+      const el = movePromptEl();
+      const panel = movePromptPanelEl();
+      if (el) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+      }
+      if (panel) panel.classList.add('hidden');
+    }
+
+    function closeMovePrompt({redraw = true} = {}) {
+      pendingMove = null;
+      hideMovePromptElements();
+      if (redraw) decorateSvg();
+    }
+
+    function movePromptStillValid() {
+      return Boolean(
+        pendingMove &&
+        state?.phase === 'move' &&
+        state?.selected === pendingMove.from &&
+        (state?.valid_clicks?.secondary || []).includes(pendingMove.to)
+      );
+    }
+
+    function renderMovePrompt() {
+      const el = movePromptEl();
+      if (!el) return;
+      if (!pendingMove) {
+        hideMovePromptElements();
+        return;
+      }
+      if (!movePromptStillValid()) {
+        closeMovePrompt({redraw: false});
+        return;
+      }
+      const from = state.territories[pendingMove.from];
+      const to = state.territories[pendingMove.to];
+      const maxMove = pendingMove.maxMove;
+      const amount = clampNumber(Math.floor(Number(pendingMove.amount || maxMove)), 1, maxMove);
+      pendingMove.amount = amount;
+      el.innerHTML = `
+        <div class="move-prompt-title">
+          <span>${from.name} → ${to.name}</span>
+          <button class="ghost" id="moveCancelBtn" type="button">Cancel</button>
+        </div>
+        <div class="move-prompt-route">Move between 1 and ${maxMove} ${maxMove === 1 ? 'army' : 'armies'}.</div>
+        <div class="move-prompt-controls">
+          <div class="move-amount-row">
+            <label for="moveAmount">Armies</label>
+            <input id="moveAmountRange" type="range" min="1" max="${maxMove}" value="${amount}">
+            <input id="moveAmount" type="number" min="1" max="${maxMove}" value="${amount}" inputmode="numeric">
+          </div>
+          <div class="move-prompt-actions">
+            <button class="ghost" id="moveSplitBtn" type="button" title="Set the move amount to split the combined armies evenly, rounded in favour of the source.">Split</button>
+            <button class="success" id="moveConfirmBtn" type="button">Move armies</button>
+          </div>
+        </div>`;
+      movePromptPanelEl()?.classList.remove('hidden');
+      el.classList.remove('hidden');
+
+      const numberEl = $('#moveAmount');
+      const rangeEl = $('#moveAmountRange');
+      const sync = source => {
+        const value = clampNumber(Math.floor(Number(source.value || 1)), 1, maxMove);
+        pendingMove.amount = value;
+        numberEl.value = String(value);
+        rangeEl.value = String(value);
+      };
+      numberEl.addEventListener('input', () => sync(numberEl));
+      rangeEl.addEventListener('input', () => sync(rangeEl));
+      numberEl.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') confirmMovePrompt();
+        if (ev.key === 'Escape') closeMovePrompt();
+      });
+      $('#moveCancelBtn')?.addEventListener('click', () => closeMovePrompt());
+      $('#moveSplitBtn')?.addEventListener('click', () => {
+        const value = splitMoveAmount(pendingMove.from, pendingMove.to, maxMove);
+        pendingMove.amount = value;
+        numberEl.value = String(value);
+        rangeEl.value = String(value);
+        numberEl.focus();
+      });
+      $('#moveConfirmBtn')?.addEventListener('click', confirmMovePrompt);
+      numberEl.focus();
+      numberEl.select();
+    }
+
+    function splitMoveRawAmount(fromSafe, toSafe) {
+      const fromStrength = Math.max(0, Number(state?.territories?.[fromSafe]?.strength || 0));
+      const toStrength = Math.max(0, Number(state?.territories?.[toSafe]?.strength || 0));
+      const total = fromStrength + toStrength;
+      const desiredSource = Math.ceil(total / 2);
+      return fromStrength - desiredSource;
+    }
+
+    function splitMoveAmount(fromSafe, toSafe, maxMove) {
+      return clampNumber(splitMoveRawAmount(fromSafe, toSafe), 1, maxMove);
+    }
+
+    function openMovePrompt(from, to, maxMove) {
+      pendingMove = {from, to, maxMove, amount: maxMove};
+      renderMovePrompt();
+      decorateSvg();
+    }
+
+    async function confirmMovePrompt() {
+      if (!movePromptStillValid()) {
+        closeMovePrompt();
+        return;
+      }
+      const amount = clampNumber(Math.floor(Number($('#moveAmount')?.value || pendingMove.amount || 1)), 1, pendingMove.maxMove);
+      try {
+        const data = await api('/api/click', {
+          method:'POST',
+          body:{territory: pendingMove.to, amount}
+        });
+        closeMovePrompt({redraw: false});
+        await applyState(data);
+      } catch (err) {
+        toast(err.message);
+      }
+    }
+
     async function territoryClick(safe, ev = null) {
       try {
         const body = {territory: safe};
@@ -1291,15 +1483,10 @@
         if (state.phase === 'move' && state.selected && state.valid_clicks.secondary.includes(safe)) {
           const fromStrength = state.territories[state.selected]?.strength || 1;
           const maxMove = Math.max(1, fromStrength - 1);
-          const raw = prompt(`Move how many armies? (1–${maxMove})`, String(maxMove));
-          if (raw === null) return;
-          const amount = Math.floor(Number(raw));
-          if (!Number.isFinite(amount) || amount < 1) {
-            toast('Move cancelled: enter a positive army count.');
-            return;
-          }
-          body.amount = Math.min(amount, maxMove);
+          openMovePrompt(state.selected, safe, maxMove);
+          return;
         }
+        if (pendingMove) closeMovePrompt({redraw: false});
         const data = await api('/api/click', {method:'POST', body});
         await applyState(data);
       } catch (err) { toast(err.message); }
