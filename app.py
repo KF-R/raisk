@@ -212,8 +212,8 @@ def ensure_stats(pid: int) -> dict:
 def add_stat(pid: int | None, field: str, amount: int = 1) -> None:
     if not pid or str(pid) not in GAME.get("players", {}):
         return
-    ensure_stats(int(pid))[field] = ensure_stats(int(pid)).get(field, 0) + int(amount)
-
+    stats = ensure_stats(int(pid))
+    stats[field] = stats.get(field, 0) + int(amount)
 
 
 def personality_name(pid: int) -> str:
@@ -236,6 +236,27 @@ def current_player() -> dict | None:
 
 def current_player_id() -> int:
     return int(GAME["current_player"] or 0)
+
+
+def clamp_int(value, lo: int, hi: int, default: int | None = None) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        n = lo if default is None else int(default)
+    return max(lo, min(n, hi))
+
+
+def clear_selection() -> None:
+    GAME["selected"] = None
+    GAME["pending_attack"] = None
+
+
+def json_state():
+    return jsonify({"ok": True, "state": public_state()})
+
+
+def json_error(message: str, status: int = 400):
+    return jsonify({"ok": False, "error": message}), status
 
 
 def owner(safe: str) -> int:
@@ -365,17 +386,28 @@ def completed_mission(pid: int) -> bool:
     return False
 
 
-def visible_mission(pid: int) -> dict | None:
+def mission_for(pid: int) -> dict | None:
     if GAME.get("mode") != "missions" or not pid:
         return None
-    player = GAME["players"].get(str(pid), {})
-    mission = MISSION_BY_ID.get(player.get("mission_id", ""))
+    return MISSION_BY_ID.get(GAME["players"].get(str(pid), {}).get("mission_id", ""))
+
+
+def mission_text(pid: int) -> str | None:
+    mission = mission_for(pid)
     if not mission:
         return None
     text = mission["text"]
     target = mission.get("target")
     if mission["kind"] == "destroy" and target and (target == pid or str(target) not in GAME["players"]):
         text += " Effective objective: Occupy 24 Territories of your choice."
+    return text
+
+
+def visible_mission(pid: int) -> dict | None:
+    mission = mission_for(pid)
+    text = mission_text(pid)
+    if not mission or text is None:
+        return None
     return {"id": mission["id"], "text": text, "complete": completed_mission(pid)}
 
 
@@ -477,6 +509,19 @@ def finish_turn_after_move() -> None:
     begin_turn(next_pid)
 
 
+def enter_attack_phase(player: dict) -> None:
+    GAME["phase"] = "attack"
+    clear_selection()
+    GAME["last_battle"] = None
+    log(f"{player['name']} advances to Attack.")
+
+
+def enter_move_phase(player: dict) -> None:
+    GAME["phase"] = "move"
+    clear_selection()
+    log(f"{player['name']} advances to Move.")
+
+
 def advance_initial_deploy_turn() -> None:
     """Rotate initial setup one army at a time.
 
@@ -506,7 +551,7 @@ def advance_initial_deploy_turn() -> None:
     else:
         GAME["current_player"] = waiting[0]
 
-    next_name = GAME["players"][str(GAME["current_player"])] ["name"]
+    next_name = GAME["players"][str(GAME["current_player"])]["name"]
     log(f"Initial deployment passes to {next_name}.")
 
 
@@ -588,17 +633,7 @@ def player_cards_for_client(pid: int) -> list[dict]:
 
 
 def effective_mission_text(pid: int) -> str | None:
-    if GAME.get("mode") != "missions":
-        return None
-    player = GAME["players"].get(str(pid), {})
-    mission = MISSION_BY_ID.get(player.get("mission_id", ""))
-    if not mission:
-        return None
-    text = mission["text"]
-    target = mission.get("target")
-    if mission["kind"] == "destroy" and target and (target == pid or str(target) not in GAME["players"]):
-        text += " Effective objective: Occupy 24 Territories of your choice."
-    return text
+    return mission_text(pid)
 
 
 def public_winner() -> dict | None:
@@ -710,10 +745,10 @@ def public_state() -> dict:
 
 
 def map_data_from_state() -> list[tuple]:
-    rows = []
-    for safe, formatted_name, x, y, ax, ay, _owner, _strength, ns in BLANK_MAP_DATA:
-        rows.append((safe, formatted_name, x, y, ax, ay, owner(safe), strength(safe), ns))
-    return rows
+    return [
+        (safe, formatted_name, x, y, ax, ay, owner(safe), strength(safe), ns)
+        for safe, formatted_name, x, y, ax, ay, _owner, _strength, ns in BLANK_MAP_DATA
+    ]
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -776,15 +811,13 @@ TERRITORY_HIT_LAYER = make_hit_layer(MAP_HEAD, TERRITORY_SAFE_NAMES)
 
 
 def owner_fill_styles(map_data: list[tuple], owner_fills: bool) -> str:
-#    return "" # Debug line used for testing only    
     if not owner_fills:
         return ""
-    lines = [' <style id="risk_owner_fill_styles">']
-    for safe_name, _formatted_name, _x, _y, _ax, _ay, terr_owner, _strength, _neighbours in map_data:
-        colour = PLAYER_COLOURS.get(terr_owner, PLAYER_COLOURS[0])["path"]
-        lines.append(f"  #map > path#{safe_name} {{ fill: {colour}; }}")
-    lines.append(" </style>")
-    return "\n".join(lines)
+    rules = (
+        f"  #map > path#{safe_name} {{ fill: {PLAYER_COLOURS.get(terr_owner, PLAYER_COLOURS[0])['path']}; }}"
+        for safe_name, _formatted_name, _x, _y, _ax, _ay, terr_owner, _strength, _neighbours in map_data
+    )
+    return "\n".join([' <style id="risk_owner_fill_styles">', *rules, " </style>"])
 
 
 def svg_head_for(map_data: list[tuple], owner_fills: bool) -> str:
@@ -823,46 +856,50 @@ def army_scale(count: int) -> float:
     return 1.8
 
 
-def generate_svg(map_data: list[tuple], owner_fills: bool = True) -> str:
-    territory_code = f'  <g id="region_labels" {REGION_LABEL_ATTRS}>\n'
-    army_code = '  <g id="armies_deployed">\n'
-
-    for safe_name, formatted_name, x, y, army_offset_x, army_offset_y, terr_owner, terr_strength, _neighbours in map_data:
-        territory_code += (
-            f'    <text id="label_{safe_name}" transform="translate({x},{y})">'
-            f'<tspan>{label_tspans(formatted_name)}</tspan></text>\n'
-        )
-
-        if terr_owner == 0: # Comment this loop escape during debugging to see army markers on empty maps
-            continue
-
-        army = PLAYER_COLOURS.get(terr_owner, PLAYER_COLOURS[0])
-        army_x = x + army_offset_x
-        army_y = y - 16 + army_offset_y
-        count_x = army_x - 0.5
-        count_y = y - 18 + army_offset_y
-        army_code += (
-            f'    <g id="ag_{safe_name}" transform-origin="{army_x} {army_y}" transform="scale({army_scale(terr_strength):.2f})">'
-            f'<use id="army_{safe_name}" xlink:href="#army" href="#army" x="{army_x}" y="{army_y}" '
-            f'fill="{army["army"]}" stroke="{("black" if terr_strength >= 3 else "none")}"/>'
-            f'<text id="army_{safe_name}_count" {ARMY_LABEL_ATTRS} letter-spacing="-1" fill="{army["ink"]}" '
-            f'x="{count_x}" y="{count_y}">{terr_strength}</text></g>\n'
-        )
-
-    territory_code += '  </g>\n\n'
-    army_code += '  </g>\n\n'
-
+def region_label_svg(safe_name: str, formatted_name: str, x: int, y: int) -> str:
     return (
-        svg_head_for(map_data, owner_fills)
-        + MAP_TAIL_BEFORE_TOP_OVERLAYS
-        + TERRITORY_HIT_LAYER
-        + ATTACK_OVERLAY
-        + REINFORCEMENT_OVERLAY
-        + territory_code
-        + army_code
-        + MAP_TAIL_CLOSE
+        f'    <text id="label_{safe_name}" transform="translate({x},{y})">'
+        f'<tspan>{label_tspans(formatted_name)}</tspan></text>'
     )
 
+
+def army_marker_svg(safe_name: str, x: int, y: int, ax: int, ay: int, owner_id: int, count: int) -> str:
+    army = PLAYER_COLOURS.get(owner_id, PLAYER_COLOURS[0])
+    army_x = x + ax
+    army_y = y - 16 + ay
+    count_x = army_x - 0.5
+    count_y = y - 18 + ay
+    stroke = "black" if count >= 3 else "none"
+    return (
+        f'    <g id="ag_{safe_name}" transform-origin="{army_x} {army_y}" transform="scale({army_scale(count):.2f})">'
+        f'<use id="army_{safe_name}" xlink:href="#army" href="#army" x="{army_x}" y="{army_y}" '
+        f'fill="{army["army"]}" stroke="{stroke}"/>'
+        f'<text id="army_{safe_name}_count" {ARMY_LABEL_ATTRS} letter-spacing="-1" fill="{army["ink"]}" '
+        f'x="{count_x}" y="{count_y}">{count}</text></g>'
+    )
+
+
+def generate_svg(map_data: list[tuple], owner_fills: bool = True) -> str:
+    labels = [f'  <g id="region_labels" {REGION_LABEL_ATTRS}>']
+    armies = ['  <g id="armies_deployed">']
+
+    for safe_name, formatted_name, x, y, ax, ay, terr_owner, terr_strength, _neighbours in map_data:
+        labels.append(region_label_svg(safe_name, formatted_name, x, y))
+        if terr_owner:
+            armies.append(army_marker_svg(safe_name, x, y, ax, ay, terr_owner, terr_strength))
+
+    labels.append('  </g>\n')
+    armies.append('  </g>\n')
+    return "".join((
+        svg_head_for(map_data, owner_fills),
+        MAP_TAIL_BEFORE_TOP_OVERLAYS,
+        TERRITORY_HIT_LAYER,
+        ATTACK_OVERLAY,
+        REINFORCEMENT_OVERLAY,
+        "\n".join(labels), "\n",
+        "\n".join(armies), "\n",
+        MAP_TAIL_CLOSE,
+    ))
 
 @app.get("/")
 def index():
@@ -1276,7 +1313,30 @@ def ai_advance_armies(pid: int, src: str, dst: str, attack_dice: int) -> int:
     return max(min_advance, min(max_advance, desired))
 
 
-def resolve_pending_attack(attack_dice: int, defence_dice: int, advance_armies: int) -> tuple[bool, str]:
+def roll_dice(count: int) -> list[int]:
+    return sorted((randint(1, 6) for _ in range(count)), reverse=True)
+
+
+def compare_rolls(attacker_rolls: list[int], defender_rolls: list[int]) -> tuple[int, int, list[dict]]:
+    attacker_losses = defender_losses = 0
+    comparisons = []
+    for a, d in zip(attacker_rolls, defender_rolls):
+        attacker_wins = a > d
+        defender_losses += int(attacker_wins)
+        attacker_losses += int(not attacker_wins)
+        comparisons.append({"a": a, "d": d, "winner": "attacker" if attacker_wins else "defender"})
+    return attacker_losses, defender_losses, comparisons
+
+
+def update_pending_attack_limits(src: str, dst: str) -> None:
+    if GAME.get("pending_attack"):
+        GAME["pending_attack"].update({
+            "max_attack_dice": min(3, strength(src) - 1),
+            "max_defence_dice": min(2, strength(dst)),
+        })
+
+
+def resolve_pending_attack(attack_dice=None, defence_dice=None, advance_armies=None) -> tuple[bool, str]:
     if GAME["phase"] != "attack" or not GAME.get("pending_attack"):
         return False, "No attack is pending."
 
@@ -1289,28 +1349,15 @@ def resolve_pending_attack(attack_dice: int, defence_dice: int, advance_armies: 
         GAME["pending_attack"] = None
         return False, "Attack is no longer valid."
 
-    max_attack = min(3, strength(src) - 1)
-    attack_dice = max(1, min(int(attack_dice), max_attack))
-    max_defence = min(2, strength(dst))
-    defence_dice = max(1, min(int(defence_dice), max_defence))
+    attack_dice = clamp_int(attack_dice, 1, min(3, strength(src) - 1), attack.get("max_attack_dice", 1))
+    defence_dice = clamp_int(defence_dice, 1, min(2, strength(dst)), attack.get("max_defence_dice", 1))
+    attacker_rolls = roll_dice(attack_dice)
+    defender_rolls = roll_dice(defence_dice)
+    attacker_losses, defender_losses, comparisons = compare_rolls(attacker_rolls, defender_rolls)
 
-    attacker_rolls = sorted([randint(1, 6) for _ in range(attack_dice)], reverse=True)
-    defender_rolls = sorted([randint(1, 6) for _ in range(defence_dice)], reverse=True)
-
-    attacker_losses = 0
-    defender_losses = 0
-    comparisons = []
-    for a, d in zip(attacker_rolls, defender_rolls):
-        if a > d:
-            defender_losses += 1
-            comparisons.append({"a": a, "d": d, "winner": "attacker"})
-        else:
-            attacker_losses += 1
-            comparisons.append({"a": a, "d": d, "winner": "defender"})
-
+    defending_pid = owner(dst)
     add_stat(pid, "attacks")
     add_stat(pid, "armies_lost", attacker_losses)
-    defending_pid = owner(dst)
     add_stat(defending_pid, "armies_lost", defender_losses)
 
     set_strength(src, strength(src) - attacker_losses)
@@ -1323,7 +1370,7 @@ def resolve_pending_attack(attack_dice: int, defence_dice: int, advance_armies: 
         conquered = True
         advance_max = max(1, strength(src) - 1)
         advance_min = min(attack_dice, advance_max)
-        advance = max(advance_min, min(int(advance_armies), advance_max))
+        advance = clamp_int(advance_armies, advance_min, advance_max, advance_max)
         set_owner(dst, pid)
         set_strength(dst, advance)
         set_strength(src, strength(src) - advance)
@@ -1336,14 +1383,12 @@ def resolve_pending_attack(attack_dice: int, defence_dice: int, advance_armies: 
         if old_owner:
             check_eliminations(conqueror_pid=pid)
         check_victory(pid)
+    elif strength(src) <= 1:
+        GAME["pending_attack"] = None
+        GAME["selected"] = None
+        log(f"{p['name']}'s attack stalls at {territory_name(src)}.")
     else:
-        if strength(src) <= 1:
-            GAME["pending_attack"] = None
-            GAME["selected"] = None
-            log(f"{p['name']}'s attack stalls at {territory_name(src)}.")
-        else:
-            GAME["pending_attack"]["max_attack_dice"] = min(3, strength(src) - 1)
-            GAME["pending_attack"]["max_defence_dice"] = min(2, strength(dst))
+        update_pending_attack_limits(src, dst)
 
     GAME["battle_seq"] = GAME.get("battle_seq", 0) + 1
     GAME["last_battle"] = {
@@ -1364,7 +1409,6 @@ def resolve_pending_attack(attack_dice: int, defence_dice: int, advance_armies: 
     if not conquered:
         log(f"Battle: {territory_name(src)} rolls {attacker_rolls}; {territory_name(dst)} rolls {defender_rolls}. Losses {attacker_losses}/{defender_losses}.")
     return True, "attack resolved"
-
 
 def choose_move(pid: int) -> tuple[str, str, int] | None:
     w = personality(pid)
@@ -1441,11 +1485,7 @@ def ai_step_once() -> tuple[bool, str]:
             return True, apply_card_trade(pid, trade_set)
         if p["reserve"] > 0:
             return True, deploy_all_ai_reserves(pid)
-        GAME["phase"] = "attack"
-        GAME["selected"] = None
-        GAME["pending_attack"] = None
-        GAME["last_battle"] = None
-        log(f"{p['name']} advances to Attack.")
+        enter_attack_phase(p)
         return True, "advanced to attack"
 
     if phase == "attack":
@@ -1471,10 +1511,7 @@ def ai_step_once() -> tuple[bool, str]:
             log(f"{p['name']} prepares to attack {territory_name(dst)} from {territory_name(src)}.")
             return True, f"prepared attack from {territory_name(src)} to {territory_name(dst)}"
 
-        GAME["phase"] = "move"
-        GAME["selected"] = None
-        GAME["pending_attack"] = None
-        log(f"{p['name']} advances to Move.")
+        enter_move_phase(p)
         return True, "advanced to move"
 
     if phase == "move":
@@ -1645,99 +1682,14 @@ def api_click():
 @app.post("/api/attack/roll")
 def api_attack_roll():
     data = request.get_json(force=True) or {}
-    if GAME["phase"] != "attack" or not GAME.get("pending_attack"):
-        return jsonify({"ok": False, "error": "No attack is pending."}), 400
-
-    pid = current_player_id()
-    p = GAME["players"][str(pid)]
-    attack = GAME["pending_attack"]
-    src, dst = attack["from"], attack["to"]
-
-    if owner(src) != pid or owner(dst) in (0, pid) or dst not in neighbours(src) or strength(src) <= 1:
-        GAME["pending_attack"] = None
-        return jsonify({"ok": False, "error": "Attack is no longer valid."}), 400
-
-    max_attack = min(3, strength(src) - 1)
-    attack_dice = int(data.get("attack_dice", max_attack))
-    attack_dice = max(1, min(attack_dice, max_attack))
-    max_defence = min(2, strength(dst))
-    defence_dice = int(data.get("defence_dice", max_defence))
-    defence_dice = max(1, min(defence_dice, max_defence))
-
-    attacker_rolls = sorted([randint(1, 6) for _ in range(attack_dice)], reverse=True)
-    defender_rolls = sorted([randint(1, 6) for _ in range(defence_dice)], reverse=True)
-
-    attacker_losses = 0
-    defender_losses = 0
-    comparisons = []
-    for a, d in zip(attacker_rolls, defender_rolls):
-        if a > d:
-            defender_losses += 1
-            comparisons.append({"a": a, "d": d, "winner": "attacker"})
-        else:
-            attacker_losses += 1
-            comparisons.append({"a": a, "d": d, "winner": "defender"})
-
-    add_stat(pid, "attacks")
-    add_stat(pid, "armies_lost", attacker_losses)
-    defending_pid = owner(dst)
-    add_stat(defending_pid, "armies_lost", defender_losses)
-
-    set_strength(src, strength(src) - attacker_losses)
-    set_strength(dst, strength(dst) - defender_losses)
-    conquered = False
-    old_owner = owner(dst)
-    advance = 0
-
-    if strength(dst) <= 0:
-        conquered = True
-        advance_max = max(1, strength(src) - 1)
-        advance_min = min(attack_dice, advance_max)
-        try:
-            requested_advance = int(data.get("advance_armies", advance_max))
-        except (TypeError, ValueError):
-            requested_advance = advance_max
-        advance = max(advance_min, min(requested_advance, advance_max))
-        set_owner(dst, pid)
-        set_strength(dst, advance)
-        set_strength(src, strength(src) - advance)
-        p["conquered_this_turn"] = True
-        GAME["pending_attack"] = None
-        GAME["selected"] = src if strength(src) > 1 else None
-        add_stat(pid, "territories_conquered")
-        add_stat(old_owner, "territories_lost")
-        log(f"{p['name']} conquers {territory_name(dst)} and advances {advance} armies.")
-        if old_owner:
-            check_eliminations(conqueror_pid=pid)
-        check_victory(pid)
-    else:
-        if strength(src) <= 1:
-            GAME["pending_attack"] = None
-            GAME["selected"] = None
-            log(f"{p['name']}'s attack stalls at {territory_name(src)}.")
-        else:
-            GAME["pending_attack"]["max_attack_dice"] = min(3, strength(src) - 1)
-            GAME["pending_attack"]["max_defence_dice"] = min(2, strength(dst))
-
-    GAME["battle_seq"] = GAME.get("battle_seq", 0) + 1
-    GAME["last_battle"] = {
-        "battle_id": GAME["battle_seq"],
-        "from": src,
-        "to": dst,
-        "from_name": territory_name(src),
-        "to_name": territory_name(dst),
-        "attacker_rolls": attacker_rolls,
-        "defender_rolls": defender_rolls,
-        "attacker_losses": attacker_losses,
-        "defender_losses": defender_losses,
-        "comparisons": comparisons,
-        "conquered": conquered,
-        "advance": advance,
-        "old_owner": old_owner,
-    }
-    if not conquered:
-        log(f"Battle: {territory_name(src)} rolls {attacker_rolls}; {territory_name(dst)} rolls {defender_rolls}. Losses {attacker_losses}/{defender_losses}.")
-    return jsonify({"ok": True, "state": public_state()})
+    ok, message = resolve_pending_attack(
+        data.get("attack_dice"),
+        data.get("defence_dice"),
+        data.get("advance_armies"),
+    )
+    if not ok:
+        return json_error(message)
+    return json_state()
 
 
 @app.post("/api/attack/stop")
@@ -1788,19 +1740,12 @@ def api_next_phase():
             return jsonify({"ok": False, "error": "You have five or more cards and must trade a set."}), 400
         if p["reserve"] > 0:
             return jsonify({"ok": False, "error": f"Deploy {p['reserve']} reserve armies before attacking."}), 400
-        GAME["phase"] = "attack"
-        GAME["selected"] = None
-        GAME["pending_attack"] = None
-        GAME["last_battle"] = None
-        log(f"{p['name']} advances to Attack.")
-        return jsonify({"ok": True, "state": public_state()})
+        enter_attack_phase(p)
+        return json_state()
 
     if phase == "attack":
-        GAME["phase"] = "move"
-        GAME["selected"] = None
-        GAME["pending_attack"] = None
-        log(f"{p['name']} advances to Move.")
-        return jsonify({"ok": True, "state": public_state()})
+        enter_move_phase(p)
+        return json_state()
 
     if phase == "move":
         check_victory(pid)
@@ -1816,7 +1761,7 @@ def api_next_phase():
 def api_ai_step():
     ok, message = ai_step_once()
     if not ok:
-        return jsonify({"ok": False, "error": message}), 400
+        return json_error(message)
     return jsonify({"ok": True, "message": message, "state": public_state()})
 
 
