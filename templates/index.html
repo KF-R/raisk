@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Risk Campaign Table v0.3.0</title>
+  <title>Risk Campaign Table v0.3.3</title>
   <style>
     :root {
       --bg: #140f0b;
@@ -69,7 +69,7 @@
     .app-shell {
       width: min(1580px, calc(100vw - 28px));
       margin: 0 auto;
-      padding: 18px 0 26px;
+      padding: 14px 0 26px;
     }
 
     .topbar {
@@ -78,7 +78,7 @@
       gap: 1rem;
       align-items: center;
       margin-bottom: 16px;
-      padding: 14px 18px;
+      padding: 12px 18px;
       border: 1px solid var(--line);
       border-radius: 24px;
       background: linear-gradient(135deg, rgba(49, 34, 22, .82), rgba(23, 16, 12, .82));
@@ -253,8 +253,20 @@
     .combat-panel.show { display: block; }
     .combat-head { display:flex; justify-content:space-between; gap:1rem; align-items:start; margin-bottom: .75rem; }
 
-
+    .move-panel {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 225, 160, .22);
+      background: linear-gradient(135deg, rgba(53, 67, 37, .64), rgba(24, 18, 12, .9));
+    }
     .move-panel.hidden { display:none; }
+    .move-panel h2 {
+      font-family: Georgia, "Times New Roman", serif;
+      color: #ffe1a0;
+      font-size: 1.15rem;
+      margin-bottom: .75rem;
+    }
     .move-prompt {
       padding: .9rem;
       border: 1px solid rgba(255, 224, 140, .28);
@@ -470,7 +482,7 @@
       display: inline-block;
       position: relative;
       overflow: hidden;
-      vertical-align: baseline;
+      vertical-align: middle;
       min-width: 1ch;
       text-align: right;
       white-space: nowrap;
@@ -508,6 +520,11 @@
 
         <div class="combat-panel" id="combatPanel"></div>
 
+        <section class="move-panel hidden" id="movePromptPanel">
+          <h2>Reinforcement move</h2>
+          <div id="movePrompt" class="move-prompt hidden" aria-live="polite"></div>
+        </section>
+
         <div class="phase-controls">
           <p class="phase-copy" id="phaseCopy">Use the campaign menu to create up to six human or AI commanders.</p>
           <div class="form-row" style="margin:0">
@@ -522,11 +539,6 @@
         <section class="card panel victory-panel hidden" id="victoryPanel">
           <h2>Victory dispatch</h2>
           <div id="victoryContent"></div>
-        </section>
-
-        <section class="card panel move-panel hidden" id="movePromptPanel">
-          <h2>Reinforcement move</h2>
-          <div id="movePrompt" class="move-prompt hidden" aria-live="polite"></div>
         </section>
 
         <section class="card panel">
@@ -677,6 +689,17 @@
       );
     }
 
+    function runEasedAnimation(duration, draw, finish = () => {}) {
+      const start = performance.now();
+      function frame(now) {
+        const t = Math.min(1, (now - start) / duration);
+        draw(easeOutCubic(t), t);
+        if (t < 1) requestAnimationFrame(frame);
+        else finish();
+      }
+      requestAnimationFrame(frame);
+    }
+
     function ensureSvgDefs(svg) {
       let defs = svg?.querySelector('defs');
       if (!defs && svg) {
@@ -755,26 +778,20 @@
       parent.insertBefore(viewport, textEl.nextSibling);
 
       const duration = counterDuration(values);
-      const start = performance.now();
       const maxOffset = rowHeight * (values.length - 1);
 
-      function finish() {
-        track.setAttribute('transform', `translate(0 ${-maxOffset})`);
-        textEl.textContent = finalText;
-        if (hadOpacity) textEl.setAttribute('opacity', oldOpacity);
-        else textEl.removeAttribute('opacity');
-        viewport.remove();
-        clip.remove();
-      }
-
-      function frame(now) {
-        const t = Math.min(1, (now - start) / duration);
-        const eased = easeOutCubic(t);
-        track.setAttribute('transform', `translate(0 ${-(maxOffset * eased)})`);
-        if (t < 1) requestAnimationFrame(frame);
-        else finish();
-      }
-      requestAnimationFrame(frame);
+      runEasedAnimation(
+        duration,
+        eased => track.setAttribute('transform', `translate(0 ${-(maxOffset * eased)})`),
+        () => {
+          track.setAttribute('transform', `translate(0 ${-maxOffset})`);
+          textEl.textContent = finalText;
+          if (hadOpacity) textEl.setAttribute('opacity', oldOpacity);
+          else textEl.removeAttribute('opacity');
+          viewport.remove();
+          clip.remove();
+        }
+      );
     }
 
     function animateHtmlCounter(el, oldValue, newValue) {
@@ -793,23 +810,17 @@
       const row = el.querySelector('.scroll-counter-row');
       const rowHeight = row?.getBoundingClientRect?.().height || (parseFloat(getComputedStyle(el).fontSize) * SCROLL_COUNTER_CONFIG.htmlRowHeightEm);
       const duration = counterDuration(values);
-      const start = performance.now();
       const maxOffset = rowHeight * (values.length - 1);
 
-      function finish() {
-        el.classList.remove('rolling');
-        el.style.height = '';
-        el.textContent = String(newValue);
-      }
-
-      function frame(now) {
-        const t = Math.min(1, (now - start) / duration);
-        const eased = easeOutCubic(t);
-        track.style.transform = `translateY(${-maxOffset * eased}px)`;
-        if (t < 1) requestAnimationFrame(frame);
-        else finish();
-      }
-      requestAnimationFrame(frame);
+      runEasedAnimation(
+        duration,
+        eased => { track.style.transform = `translateY(${-maxOffset * eased}px)`; },
+        () => {
+          el.classList.remove('rolling');
+          el.style.height = '';
+          el.textContent = String(newValue);
+        }
+      );
     }
 
     function animateArmyCounterIncreases(previousState, currentState) {
@@ -835,11 +846,7 @@
 
     function ensureExplosionDefs(svg) {
       if (!svg || svg.querySelector('#explosionGlow')) return;
-      let defs = svg.querySelector('defs');
-      if (!defs) {
-        defs = svgEl('defs');
-        svg.insertBefore(defs, svg.firstChild);
-      }
+      const defs = ensureSvgDefs(svg);
       const filter = svgEl('filter', {id: 'explosionGlow', x: '-80%', y: '-80%', width: '260%', height: '260%'});
       const blur = svgEl('feGaussianBlur', {stdDeviation: '3', result: 'blur'});
       const merge = svgEl('feMerge');
@@ -1118,6 +1125,13 @@
       })[phase] || phase;
     }
 
+    function numberOptions(max, selected = max, min = 1) {
+      return Array.from({length: Math.max(0, max - min + 1)}, (_, i) => {
+        const value = min + i;
+        return `<option value="${value}" ${value === selected ? 'selected' : ''}>${value}</option>`;
+      }).join('');
+    }
+
     function renderState(previousState = null) {
       const current = state.current;
       $('#menuModal').classList.toggle('hidden', state.started);
@@ -1196,7 +1210,7 @@
       }).join('');
       table.innerHTML = `
         <table>
-          <thead><tr><th>Player</th><th>Terr.</th><th>Cards</th><th>Reserve</th><th>Armies</th><th>Bonus</th></tr></thead>
+          <thead><tr style="cursor: default;"><th>Player</th><th title="Territories">🗺</th><th title="Cards">🃟</th><th title="Reserves">⛉</th><th title="Armies">⚔︎</th><th title="Continent Bonus">⛨</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
       animateReserveCounterIncreases(table);
@@ -1283,7 +1297,7 @@
 
     function renderCombat() {
       const panel = $('#combatPanel');
-      if (!state.pending_attack && !state.last_battle) {
+      if (state?.phase !== 'attack' || (!state.pending_attack && !state.last_battle)) {
         panel.classList.remove('show');
         panel.innerHTML = '';
         return;
@@ -1298,9 +1312,9 @@
           </div>
           <div class="form-row" style="margin:0">
             <label for="attackDice">Attack dice</label>
-            <select id="attackDice" onchange="syncAdvanceSelect()">${[...Array(pa.max_attack_dice)].map((_, i) => `<option value="${i+1}" ${i+1===pa.max_attack_dice?'selected':''}>${i+1}</option>`).join('')}</select>
+            <select id="attackDice" onchange="syncAdvanceSelect()">${numberOptions(pa.max_attack_dice)}</select>
             <label for="defDice">Defence dice</label>
-            <select id="defDice">${[...Array(pa.max_defence_dice)].map((_, i) => `<option value="${i+1}" ${i+1===pa.max_defence_dice?'selected':''}>${i+1}</option>`).join('')}</select>
+            <select id="defDice">${numberOptions(pa.max_defence_dice)}</select>
             <label for="advanceArmies">Advance</label>
             <select id="advanceArmies"></select>
             <button onclick="rollAttack()">Roll volley</button>
