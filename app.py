@@ -797,6 +797,12 @@ ATTACK_OVERLAY = (
     '  </g>\n\n'
 )
 
+REINFORCEMENT_OVERLAY = (
+    '  <g id="reinforcement_overlay" pointer-events="none" aria-hidden="true">\n'
+    '    <use id="reinforcement_arrow_use" xlink:href="#reinforcement_arrow_shape" href="#reinforcement_arrow_shape" visibility="hidden" opacity="0.36"/>\n'
+    '  </g>\n\n'
+)
+
 
 REGION_LABEL_ATTRS = (
     'font-family="Helvetica,Arial,sans-serif" font-size="12" font-style="normal" '
@@ -851,6 +857,7 @@ def generate_svg(map_data: list[tuple], owner_fills: bool = True) -> str:
         + MAP_TAIL_BEFORE_TOP_OVERLAYS
         + TERRITORY_HIT_LAYER
         + ATTACK_OVERLAY
+        + REINFORCEMENT_OVERLAY
         + territory_code
         + army_code
         + MAP_TAIL_CLOSE
