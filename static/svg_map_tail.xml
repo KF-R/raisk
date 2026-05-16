@@ -1,5 +1,5 @@
 <g id="continents" font-family="Times,Times New Roman,serif" font-style="italic" font-size="18" font-weight="bold" letter-spacing="0" transform="translate(-7,7)">
-       <text transform="translate(226,280)" stroke="#dd2"><tspan>North</tspan><tspan x="0" dy="0.9em">America</tspan><tspan x="0" dy="0.9em">(5)</tspan></text>
+       <text transform="translate(226,260)" stroke="#dd2"><tspan>North</tspan><tspan x="0" dy="0.9em">America</tspan><tspan x="0" dy="0.9em">(5)</tspan></text>
        <text transform="translate(300,490)" stroke="#f66"><tspan>South</tspan><tspan x="0" dy="0.9em">America</tspan><tspan x="0" dy="0.9em">(2)</tspan></text>
        <text transform="translate(620,155)" stroke="#2af"><tspan>Europe</tspan><tspan x="0" dy="0.9em">(5)</tspan></text>
        <text transform="translate(500,490)" stroke="#fc3"><tspan>Africa</tspan><tspan x="0" dy="0.9em">(3)</tspan></text>
